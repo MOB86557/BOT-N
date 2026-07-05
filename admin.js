@@ -65,6 +65,7 @@ async function handleAdminMenu(api, event) {
     `❖ فك الصمت الكل\n` +
     `❖ اعدادات كوينز التفاعل\n` +
     `❖ تفاعلات\n` +
+    `❖ مفاتيح رسم\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
     `❖ المشرفون\n` +
     `❖ ريست \n` +
@@ -300,6 +301,93 @@ async function handleCommandMgmtSession(api, event, session) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//   جلسة إدارة مفاتيح الرسم
+// ═════════════════════════════════════════════════════════════════════
+async function handleDrawKeysSession(api, event, session) {
+  const { senderID, body } = event;
+  const text = (body || '').trim();
+  const s = session.state;
+  const db = require('./database').getDB();
+
+  if (text === 'خروج') {
+    await deleteAdminSession(senderID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
+    return;
+  }
+
+  if (s === 'DRAW_KEYS_MAIN') {
+    if (text === '1') {
+      const keys = await db.collection('drawing_keys').find({}).toArray();
+      if (keys.length === 0) {
+        await sendMessage(api, `⚠️ لا توجد أي مفاتيح رسم مضافة حالياً.`, event.threadID);
+      } else {
+        let msg = `╮───∙⋆⋅「 🎨 مفاتيح الرسم المضافة 」\n`;
+        keys.forEach((k, idx) => {
+          msg += `│ ${idx + 1}. ${k.key.substring(0, 8)}...${k.key.substring(k.key.length - 4)}\n`;
+        });
+        msg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
+        await sendMessage(api, msg, event.threadID);
+      }
+      await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
+      return;
+    }
+    if (text === '2') {
+      await setAdminSession(senderID, { state: 'DRAW_KEYS_ADD' });
+      await sendMessage(api, `يرجى إرسال مفتاح Google AI Studio الجديد المراد إضافته:`, event.threadID);
+      return;
+    }
+    if (text === '3') {
+      const keys = await db.collection('drawing_keys').find({}).toArray();
+      if (keys.length === 0) {
+        await sendMessage(api, `⚠️ لا توجد مفاتيح لحذفها.`, event.threadID);
+        await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
+        return;
+      }
+      await setAdminSession(senderID, { state: 'DRAW_KEYS_DELETE', keysList: keys });
+      let msg = `╮───∙⋆⋅「 🗑️ حذف مفتاح رسم 」\nالرجاء كتابة رقم المفتاح المراد حذفه:\n`;
+      keys.forEach((k, idx) => {
+        msg += `│ ${idx + 1}. ${k.key.substring(0, 8)}...${k.key.substring(k.key.length - 4)}\n`;
+      });
+      msg += `╯───────∙⋆⋅ ※ ⋅⋆∙\n› اكتب الرقم أو "خروج" للإلغاء.`;
+      await sendMessage(api, msg, event.threadID);
+      return;
+    }
+    await sendMessage(api, `⚠️ خيار غير صحيح. الرجاء إدخال رقم من 1 إلى 3 أو 《 خروج 》.`, event.threadID);
+    return;
+  }
+
+  if (s === 'DRAW_KEYS_ADD') {
+    if (!text) {
+      await sendMessage(api, `⚠️ الرجاء إدخال مفتاح صالح.`, event.threadID);
+      return;
+    }
+    const exists = await db.collection('drawing_keys').findOne({ key: text });
+    if (exists) {
+      await sendMessage(api, `⚠️ هذا المفتاح مضاف بالفعل مسبقاً!`, event.threadID);
+    } else {
+      await db.collection('drawing_keys').insertOne({ key: text, createdAt: new Date() });
+      await sendMessage(api, `✅ تم إضافة مفتاح الرسم الجديد بنجاح!`, event.threadID);
+    }
+    await deleteAdminSession(senderID);
+    return;
+  }
+
+  if (s === 'DRAW_KEYS_DELETE') {
+    const idx = parseInt(text, 10) - 1;
+    const keysList = session.keysList || [];
+    if (isNaN(idx) || idx < 0 || idx >= keysList.length) {
+      await sendMessage(api, `⚠️ خيار غير صحيح. الرجاء إدخال الرقم المقابل للمفتاح.`, event.threadID);
+      return;
+    }
+    const keyToDelete = keysList[idx];
+    await db.collection('drawing_keys').deleteOne({ _id: keyToDelete._id });
+    await sendMessage(api, `✅ تم حذف المفتاح بنجاح!`, event.threadID);
+    await deleteAdminSession(senderID);
+    return;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //   الموجّه الرئيسي لجميع أوامر الأدمن
 // ═════════════════════════════════════════════════════════════════════
 
@@ -321,6 +409,12 @@ async function handleAdminCommand(api, event) {
     if (text === 'خروج') {
       await deleteAdminSession(senderID);
       await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
+      return true;
+    }
+
+    // توجيه جلسات مفاتيح الرسم للادمن
+    if (s.startsWith('DRAW_KEYS_')) {
+      await handleDrawKeysSession(api, event, adminSession);
       return true;
     }
 
@@ -501,6 +595,35 @@ async function handleAdminCommand(api, event) {
     return true;
   }
 
+  // --- أمر العقوبة (إضافة إنذار) ---
+  if (text === 'عقوبة') {
+    if (!event.messageReply) {
+      const { sendReply } = require('./utils');
+      await sendReply(api, `❌ يرجى الرد على رسالة اللاعب المستهدف لتطبيق العقوبة (إضافة إنذار).`, event.messageID, event.threadID);
+      return true;
+    }
+    const targetID = String(event.messageReply.senderID);
+    const { updatePlayer } = require('./database');
+    const { sendReply } = require('./utils');
+    const victimPlayer = await getPlayer(targetID);
+    if (!victimPlayer) {
+      await sendReply(api, `❌ هذا المستخدم غير مسجل في نظام نيكسوس.`, event.messageID, event.threadID);
+      return true;
+    }
+    const currentWarnings = (victimPlayer.warnings || 0) + 1;
+    await updatePlayer(targetID, { warnings: currentWarnings });
+    try {
+      const gid = config.groupes[victimPlayer.kingdom];
+      if (gid) {
+        const { changePlayerNickname } = require('./dukhul');
+        await changePlayerNickname(api, gid, targetID, victimPlayer.nickname, victimPlayer.rank || 'مجند', victimPlayer.class, currentWarnings);
+      }
+    } catch (e) {}
+    await sendReply(api, `⚠️ تم إضافة إنذار للاعب [${victimPlayer.nickname}].\nعدد الإنذارات الحالي: ${'🔴'.repeat(currentWarnings)}`, event.messageID, event.threadID);
+    await moderation.checkAndEnforceWarnings(api, targetID, victimPlayer.nickname, victimPlayer.kingdom, currentWarnings).catch(() => {});
+    return true;
+  }
+
   // --- أمر رتب الإدارة المخصص ---
   if (text === 'رتب الادارة' || text === 'رتب الإدارة') {
     const { handleRanksAlIdarah } = require('./ranks');
@@ -595,6 +718,19 @@ async function handleAdminCommand(api, event) {
       `╯───────∙⋆⋅ ※ ⋅⋆∙───────◈\n\n` +
       `› أرسل رقم الخيار المطلوب أو اكتب 《 خروج 》 للإلغاء.`;
     await sendMessage(api, msg, event.threadID);
+    return true;
+  }
+
+  if (text === 'مفاتيح رسم') {
+    await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
+    const menuMsg = 
+      `╮───∙⋆⋅「 🎨 إدارة مفاتيح الرسم 」\n` +
+      `│ 1 》 عرض المفاتيح الحالية\n` +
+      `│ 2 》 إضافة مفتاح جديد\n` +
+      `│ 3 》 حذف مفتاح\n` +
+      `╯───────∙⋆⋅ ※ ⋅⋆∙───────◈\n\n` +
+      `› أرسل رقم الخيار المطلوب أو اكتب 《 خروج 》 للإلغاء.`;
+    await sendMessage(api, menuMsg, event.threadID);
     return true;
   }
 
@@ -722,13 +858,11 @@ async function handleAdminCommand(api, event) {
     return true;
   }
 
-  // ⚠️ لازم فحص "بانكاي مؤبد" يكون قبل فحص "بانكاي" العادي
-  // لأن regex أمر "بانكاي" العادي كان يمسك "بانكاي مؤبد فلان" ويعتبر "مؤبد فلان" هو اسم الهدف
-  if (text === 'بانكاي مؤبد' || (event.messageReply && text === 'بانكاي مؤبد')) { await moderation.handleBayaatMoabad(api, event, ''); return true; }
-  if (/^بانكاي مؤبد\s+(.+)$/.test(text)) { await moderation.handleBayaatMoabad(api, event, text.replace(/^بانكاي مؤبد\s+/, '')); return true; }
-
   if (text === 'بانكاي' || (event.messageReply && text === 'بانكاي')) { await moderation.handleBayaat(api, event, ''); return true; }
   if (/^بانكاي\s+(.+)$/.test(text)) { await moderation.handleBayaat(api, event, text.replace(/^بانكاي\s+/, '')); return true; }
+  
+  if (text === 'بانكاي مؤبد' || (event.messageReply && text === 'بانكاي مؤبد')) { await moderation.handleBayaatMoabad(api, event, ''); return true; }
+  if (/^بانكاي مؤبد\s+(.+)$/.test(text)) { await moderation.handleBayaatMoabad(api, event, text.replace(/^بانكاي مؤبد\s+/, '')); return true; }
   
   if (text === 'طرد' || (event.messageReply && text === 'طرد')) { await moderation.handleBayaat(api, event, ''); return true; }
   if (/^طرد\s+(.+)$/.test(text)) { await moderation.handleBayaat(api, event, text.replace(/^طرد\s+/, '')); return true; }
