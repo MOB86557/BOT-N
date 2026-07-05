@@ -158,7 +158,7 @@ async function startSellFlow(api, event, player) {
   resources.forEach((r, i) => {
     listMsg += `${i + 1}. ${r.name} ×${r.quantity}\n`;
   });
-  listMsg += `━════════════════━\nرد على هذه الرسالة برقم المورد الذي تريد بيعه\n◇ لبيع كل ماتملك دفعة واحدة رد على هذه الرسالة برقم 0`;
+  listMsg += `━════════════════━\nرد على هذه الرسالة برقم المورد الذي تريد بيعه`;
 
   await setMubadilSession(String(senderID), {
     step: 'choose_resource',
@@ -300,38 +300,9 @@ async function handleMubadilSession(api, event, session) {
 
   if (session.step === 'choose_resource') {
     const choice = parseInt(text, 10);
-    if (isNaN(choice) || choice < 0 || choice > session.resources.length) {
+    if (isNaN(choice) || choice < 1 || choice > session.resources.length) {
       await deleteMubadilSession(String(senderID));
       return false;
-    }
-
-    if (choice === 0) {
-      let totalCoins = 0;
-      const breakdown = [];
-      for (const r of session.resources) {
-        const resource = findResourceByName(r.name);
-        const unitPrice = resource ? await calculatePrice(resource) : 0;
-        const sellUnitPrice = Math.round(unitPrice * SELL_RATIO);
-        const earned = sellUnitPrice * r.quantity;
-        totalCoins += earned;
-        breakdown.push({ name: r.name, quantity: r.quantity, earned });
-      }
-
-      let confirmMsg = `⭗ بيع جميع مواردك :\n`;
-      breakdown.forEach(r => {
-        confirmMsg += `◆ ${r.name} ×${r.quantity} — ${r.earned} كوينز\n`;
-      });
-      confirmMsg += `━════════════════━\n💰 المجموع الكلي : ${totalCoins} كوينز\n━════════════════━\nاكتب 《 بيع 》للتأكيد أو 《 الغاء 》للإلغاء`;
-
-      await setMubadilSession(String(senderID), {
-        step: 'confirm_sell_all',
-        resources: session.resources,
-        totalCoins,
-        threadID
-      });
-
-      await sendReply(api, confirmMsg, messageID, threadID);
-      return true;
     }
 
     const chosen = session.resources[choice - 1];
@@ -428,43 +399,37 @@ async function handleMubadilSession(api, event, session) {
     }
   }
 
-  if (session.step === 'confirm_sell_all') {
-    if (text !== 'بيع') {
-      await deleteMubadilSession(String(senderID));
-      return false;
-    }
+  return false;
+}
 
-    processingLock.add(lockKey);
-    try {
-      const player = await getPlayer(senderID);
-      let totalEarned = 0;
+// ===== اختصار مباشر: "المبادل شراء" / "المبادل بيع" =====
 
-      for (const r of session.resources) {
-        const bag = (await getPlayer(senderID)).bag || [];
-        const item = bag.find(i => i.name === r.name && i.type === 'resource');
-        if (!item) continue;
+async function handleMubadilShortcut(api, event) {
+  const { threadID, senderID, messageID, body } = event;
+  const text = (body || '').trim();
 
-        const resource = findResourceByName(r.name);
-        const unitPrice = resource ? await calculatePrice(resource) : 0;
-        const sellUnitPrice = Math.round(unitPrice * SELL_RATIO);
-        const earned = sellUnitPrice * item.quantity;
+  const match = text.match(/^المبادل\s+(شراء|بيع)$/);
+  if (!match) return false;
 
-        await removeItemFromBag(String(senderID), r.name, item.quantity);
-        totalEarned += earned;
-      }
+  const action = match[1];
 
-      const freshPlayer = await getPlayer(senderID);
-      const newCoins = (freshPlayer.coins || 0) + totalEarned;
-      await updatePlayer(String(senderID), { coins: newCoins });
-      await deleteMubadilSession(String(senderID));
+  const player = await getPlayer(senderID);
+  if (!player) {
+    await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return true;
+  }
 
-      await sendReply(api,
-        `✅️ تم بيع جميع مواردك بنجاح\n💰 المبلغ المستلم : ${totalEarned} كوينز\n◆ رصيدك الحالي : ${newCoins} كوينز`,
-        messageID, threadID);
-      return true;
-    } finally {
-      processingLock.delete(lockKey);
-    }
+  // نحذف أي جلسة سابقة عالقة لنفس اللاعب قبل الدخول المباشر
+  await deleteMubadilSession(String(senderID));
+
+  if (action === 'شراء') {
+    await sendBuyPage(api, senderID, threadID, messageID, 1);
+    return true;
+  }
+
+  if (action === 'بيع') {
+    await startSellFlow(api, event, player);
+    return true;
   }
 
   return false;
@@ -532,6 +497,7 @@ async function handleMubadilBuyResource(api, event, resourceName, qty, agreedTot
 module.exports = {
   handleMubadil,
   handleMubadilSession,
+  handleMubadilShortcut,
   handleMubadilBuyResource,
   findResourceByName
 };
