@@ -26,6 +26,7 @@ const { handleIntruderMessage } = require('./dakhil');
 const { checkAndSendNotifications } = require('./isharat');
 const { cacheMessage, handleUnsend } = require('./spy_group');
 const { handleAwamer } = require('./awamer');
+const { handleMubadilShortcut } = require('./mubadil');
 
 const {
   getPlayer, getPlayerByNickname, incrementMessageCount,
@@ -166,9 +167,6 @@ async function routeEvent(api, event, BOT_ID) {
   if (isKingdomOrCity) {
     incrementMessageCount().catch(() => {});
     checkAndSendNotifications(api, event).catch(() => {});
-    if (player) {
-      updatePlayer(String(senderID), { lastMessageAt: new Date() }).catch(() => {});
-    }
   }
 
   if (!text) return;
@@ -230,6 +228,9 @@ async function routeEvent(api, event, BOT_ID) {
     }
     return;
   }
+
+  // اختصار مباشر: "المبادل شراء" / "المبادل بيع"
+  if (await handleMubadilShortcut(api, event)) return;
 
   await routeMainCommands(api, event, text, player, kingdom);
 }
