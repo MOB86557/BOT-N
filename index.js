@@ -150,6 +150,9 @@ async function tickInactivityCheck(api) {
 }
 const { sendMessage, H } = require('./utils');
 
+// استيراد نظام التحكم والمساعد لتليجرام
+const { initTelegramBot } = require('./telegram_bot');
+
 let bootReport = [];
 let currentStopListening = null;
 
@@ -432,6 +435,13 @@ async function start() {
   try {
     await connectDB();
     log('OK', '✅ تم الاتصال بقاعدة البيانات');
+
+    // ─── تفعيل بوت تليجرام المساعد تلقائياً بعد نجاح اتصال قاعدة البيانات ───
+    try {
+      initTelegramBot();
+    } catch (tgError) {
+      log('ERROR', '⚠️ فشل تفعيل بوت تليجرام المساعد:', tgError.message);
+    }
 
     const { initSessionCache } = require('./database');
     await initSessionCache();
