@@ -26,6 +26,7 @@ const { handleIntruderMessage } = require('./dakhil');
 const { checkAndSendNotifications } = require('./isharat');
 const { cacheMessage, handleUnsend } = require('./spy_group');
 const { handleAwamer } = require('./awamer');
+const { handleMubadilShortcut } = require('./mubadil');
 
 const {
   getPlayer, getPlayerByNickname, incrementMessageCount,
@@ -228,6 +229,13 @@ async function routeEvent(api, event, BOT_ID) {
     } catch (e) {
       console.error('[Router] Error in handlePlayerCoinsCommand:', e);
     }
+    return;
+  }
+
+  // اختصار "المبادل شراء" / "المبادل بيع"
+  if (text === 'المبادل شراء' || text === 'المبادل بيع') {
+    const action = text === 'المبادل شراء' ? 'شراء' : 'بيع';
+    await handleMubadilShortcut(api, event, action);
     return;
   }
 
