@@ -1,5 +1,12 @@
 // index.js
 
+// ─── تعطيل progress bars و spinners من المكتبات الخارجية ───
+// fca-unofficial تفحص process.stdout.isTTY قبل تشغيل الـ progress bar
+// في بيئات الاستضافة (wispbyte وغيرها) تُعاد قيمة true مما يتسبب في
+// طباعة آلاف escape codes مثل [1A وتسبب لاق ثم إغلاق السيرفر
+process.stdout.isTTY = false;
+process.stderr.isTTY = false;
+
 // ─── 🚨 حماية معالج الأخطاء ومنع المكتبات الخارجية من كتم الأخطاء ───
 const originalOn = process.on;
 const originalAddListener = process.addListener;
@@ -149,9 +156,6 @@ async function tickInactivityCheck(api) {
   }
 }
 const { sendMessage, H } = require('./utils');
-
-// استيراد نظام التحكم والمساعد لتليجرام
-const { initTelegramBot } = require('./telegram_bot');
 
 let bootReport = [];
 let currentStopListening = null;
@@ -435,13 +439,6 @@ async function start() {
   try {
     await connectDB();
     log('OK', '✅ تم الاتصال بقاعدة البيانات');
-
-    // ─── تفعيل بوت تليجرام المساعد تلقائياً بعد نجاح اتصال قاعدة البيانات ───
-    try {
-      initTelegramBot();
-    } catch (tgError) {
-      log('ERROR', '⚠️ فشل تفعيل بوت تليجرام المساعد:', tgError.message);
-    }
 
     const { initSessionCache } = require('./database');
     await initSessionCache();
