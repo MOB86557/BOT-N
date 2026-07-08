@@ -107,27 +107,25 @@ async function handleMubadil(api, event) {
   });
 }
 
-// ===== صفحات الشراء =====
+// ===== صفحة الشراء (كل الموارد بصفحة واحدة) =====
 
-const BUY_PAGES = [
-  { kingdomLabel: 'مورداك', table: MURDAK_RESOURCES },
-  { kingdomLabel: 'سولفارا', table: SOLFARA_RESOURCES },
-  { kingdomLabel: 'نيرافيل', table: NIRAVIL_RESOURCES }
+// نفس ترتيب المطلوب: مورداك ثم سولفارا ثم نيرافيل
+const ALL_RESOURCES_TABLE = [
+  ...MURDAK_RESOURCES,
+  ...SOLFARA_RESOURCES,
+  ...NIRAVIL_RESOURCES
 ];
 
-async function sendBuyPage(api, senderID, threadID, replyToMessageID, pageNum) {
-  const page = BUY_PAGES[pageNum - 1];
-  const resourcesWithPrices = await getResourcesWithPrices(page.table);
+async function sendAllResourcesPage(api, senderID, threadID, replyToMessageID) {
+  const resourcesWithPrices = await getResourcesWithPrices(ALL_RESOURCES_TABLE);
 
-  let msg = `⭗ موارد ${page.kingdomLabel} :\n`;
+  let msg = `⭗ جميع الموارد :\n`;
   resourcesWithPrices.forEach((r, i) => {
     msg += `${i + 1}. ${r.name} — ${r.price} كوينز\n`;
   });
   msg += `══════════════━\n`;
-  msg += `● الصفحة ${pageNum} من 3\n`;
-  msg += `● للانتقال لصفحة اخرى رد على هذه الرسالة برقم الصفحة 1.2.3..\n`;
-  msg += `● لشراء اي مورد رد على هذه الرسالة باسمه\n`;
-  msg += `● تنبيه : تتغير الاسعار كل 5 دقائق حسب الطلب وندرة المورد وعوامل اخرى\n`;
+  msg += `● لشراء أي مورد رد على هذه الرسالة برقمه\n`;
+  msg += `● تنبيه: تتغير الأسعار كل 5 دقائق حسب الطلب وندرة المورد وعوامل أخرى.\n`;
   msg += `━════════════════━`;
 
   const sentInfo = await sendReply(api, msg, replyToMessageID, threadID);
@@ -135,7 +133,6 @@ async function sendBuyPage(api, senderID, threadID, replyToMessageID, pageNum) {
 
   await setMubadilSession(String(senderID), {
     step: 'buy_browsing',
-    currentPage: pageNum,
     pageMessageId: pageMsgId,
     pageResources: resourcesWithPrices.map(r => ({ name: r.name, price: r.price })),
     threadID
@@ -201,7 +198,7 @@ async function handleMubadilSession(api, event, session) {
     }
 
     if (text === 'شراء') {
-      await sendBuyPage(api, senderID, threadID, messageID, 1);
+      await sendAllResourcesPage(api, senderID, threadID, messageID);
       return true;
     }
 
@@ -216,25 +213,21 @@ async function handleMubadilSession(api, event, session) {
   }
 
   if (session.step === 'buy_browsing') {
-    const repliedId = event.messageReply ? String(event.messageReply.messageID) : null;
-    const isReplyToPage = repliedId && session.pageMessageId && repliedId === session.pageMessageId;
-
-    if (!isReplyToPage) {
-      // إذا أرسل شيئاً دون الرد على صفحة المتجر، نتجاهل فقط ونبقي الجلسة حية
-      return false;
-    }
-
-    if (/^[1-3]$/.test(text)) {
-      const pageNum = parseInt(text, 10);
-      await sendBuyPage(api, senderID, threadID, messageID, pageNum);
-      return true;
-    }
-
     const pageResources = session.pageResources || [];
-    const chosen = pageResources.find(r => r.name === text);
+
+    let chosen = null;
+    if (/^\d+$/.test(text)) {
+      const idx = parseInt(text, 10);
+      if (idx >= 1 && idx <= pageResources.length) {
+        chosen = pageResources[idx - 1];
+      }
+    }
+    if (!chosen) {
+      chosen = pageResources.find(r => r.name === text);
+    }
 
     if (!chosen) {
-      // إذا كتب نصاً غير متوفر بالصفحة، نلغي الجلسة
+      // إذا كتب نصاً/رقماً غير متوفر بالصفحة، نلغي الجلسة
       await deleteMubadilSession(String(senderID));
       return false;
     }
@@ -529,9 +522,32 @@ async function handleMubadilBuyResource(api, event, resourceName, qty, agreedTot
   return true;
 }
 
+// ===== اختصار "المبادل شراء" / "المبادل بيع" =====
+
+async function handleMubadilShortcut(api, event, action) {
+  const { threadID, messageID, senderID } = event;
+
+  const player = await getPlayer(senderID);
+  if (!player) {
+    await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return;
+  }
+
+  if (action === 'شراء') {
+    await sendAllResourcesPage(api, senderID, threadID, messageID);
+    return;
+  }
+
+  if (action === 'بيع') {
+    await startSellFlow(api, event, player);
+    return;
+  }
+}
+
 module.exports = {
   handleMubadil,
   handleMubadilSession,
   handleMubadilBuyResource,
+  handleMubadilShortcut,
   findResourceByName
 };
