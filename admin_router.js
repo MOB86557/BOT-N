@@ -1,7 +1,3 @@
-// admin_router.js
-// توجيه أوامر الأدمن (DM وداخل القروبات) وأوامر نائب الامبراطور (لوحة التحكم، بانكاي، عقوبة، تجاهل، فك التجاهل، اضافة، مهام)
-// وكذلك جلسة تعديل الرتب اليدوية (AWAITING_RANK_CHANGE_NUMBER)، وجلسة إضافة نائب الامبراطور لقروب (DEPUTY_ADD_GROUP)، وجلسة وقت التجاهل (AWAITING_IGNORE_DURATION)
-
 const config = require('./config.json');
 const { sendReply, kingdomNamesAr } = require('./utils');
 const {
@@ -11,10 +7,8 @@ const { getPlayer, updatePlayer, getAdminSession, deleteAdminSession, setAdminSe
 const { RANKS_ORDER, checkManualRankLimits } = require('./ranks');
 const { notifyAdmins } = require('./musa3idat');
 
-// كاش لتسجيل فحص عناوين المجموعات لتجنب استدعاء API بشكل متكرر
 global.lastMuteTitleCheck = global.lastMuteTitleCheck || {};
 
-// تهيئة مجموعات الصمت من قاعدة البيانات عند الحاجة
 async function initMutedGroups() {
   if (global.mutedGroupsLoaded) return;
   global.mutedGroups = global.mutedGroups || {};
@@ -30,7 +24,38 @@ async function initMutedGroups() {
   }
 }
 
-// دالة التحقق من صلاحية تطبيق عقوبة التجاهل
+// دالة موحدة لبناء الكنية ديناميكياً شاملة الرتب والرموز التعبيرية وحالة المشفى والتجاهل
+async function getDynamicNicknameForRouter(player, forceMute = false) {
+  const { generateNickname } = require('./utils');
+  const baseRank = player.rank || 'متدرب';
+  let nick = generateNickname(player.nickname, baseRank, player.class, player.warnings || 0);
+
+  // 1. فحص حالة الإنعاش 🏥
+  const isRecovery = player.recoveryUntil && new Date(player.recoveryUntil).getTime() > Date.now();
+  if (isRecovery) {
+    nick += ' 🏥';
+  }
+
+  // 2. فحص حالة التجاهل والكتم 🔇
+  if (forceMute) {
+    if (!nick.includes('🔇')) {
+      nick += ' 🔇';
+    }
+  } else {
+    try {
+      const db = require('./database').getDB();
+      const isIgnored = await db.collection('ignored_players').findOne({ fbId: String(player.fbId) });
+      if (isIgnored) {
+        if (!nick.includes('🔇')) {
+          nick += ' 🔇';
+        }
+      }
+    } catch(e) {}
+  }
+
+  return nick;
+}
+
 async function isAuthorizedForIgnore(senderID) {
   if (isAdmin(senderID)) return true;
   const player = await getPlayer(senderID);
@@ -40,18 +65,15 @@ async function isAuthorizedForIgnore(senderID) {
   return false;
 }
 
-// دالة مساعدة لحل هوية اللاعب المستهدف من الاسم أو اللقب أو الأيدي أو الرابط
 async function resolveTargetPlayer(target) {
   if (!target) return null;
   const db = require('./database').getDB();
   let player = null;
   
-  // 1. الأيدي المباشر
   if (/^\d+$/.test(target)) {
     player = await db.collection('players').findOne({ fbId: target });
   }
   
-  // 2. الرابط المباشر
   if (!player && (target.includes('facebook.com') || target.includes('fb.com'))) {
     const idMatch = target.match(/(?:profile\.php\?id=)?(\d+)/);
     const extractedId = idMatch ? idMatch[1] : null;
@@ -63,7 +85,6 @@ async function resolveTargetPlayer(target) {
     }
   }
   
-  // 3. البحث بالكنية أو الاسم
   if (!player) {
     player = await db.collection('players').findOne({ 
       $or: [
@@ -76,7 +97,6 @@ async function resolveTargetPlayer(target) {
   return player;
 }
 
-// دالة تنظيف التلقائي للمتجاهلين المنتهية فتراتهم وإعادة كنياتهم الطبيعية
 async function checkAndCleanExpiredIgnores(api) {
   try {
     const db = require('./database').getDB();
@@ -85,11 +105,11 @@ async function checkAndCleanExpiredIgnores(api) {
     for (const exp of expired) {
       const victimPlayer = await getPlayer(exp.fbId);
       if (victimPlayer) {
-        const dbNickname = victimPlayer.nickname || '';
+        const fullNick = await getDynamicNicknameForRouter(victimPlayer, false);
         const victimGroupId = config.groupes[victimPlayer.kingdom];
         if (victimGroupId) {
           try {
-            await new Promise(resolve => api.changeNickname(dbNickname, victimGroupId, exp.fbId, () => resolve()));
+            await new Promise(resolve => api.changeNickname(fullNick, victimGroupId, exp.fbId, () => resolve()));
           } catch (e) {}
         }
       }
@@ -100,7 +120,6 @@ async function checkAndCleanExpiredIgnores(api) {
   }
 }
 
-// دالة فحص وتطبيق عقوبات وضع الصمت النشط بالقروب
 async function checkMutedGroupMessage(api, event) {
   const { threadID, senderID, messageID } = event;
   if (!threadID || !senderID) return false;
@@ -112,7 +131,6 @@ async function checkMutedGroupMessage(api, event) {
 
   const player = await getPlayer(senderID);
   
-  // الاستثناء: يسمح فقط للإمبراطور ومطور النظام الأعلى بالكلام أثناء وضع الصمت
   const isEmp = player && player.rank === 'الامبراطور';
   const isSysAdmin = isAdmin(senderID);
 
@@ -120,7 +138,6 @@ async function checkMutedGroupMessage(api, event) {
     return false; 
   }
 
-  // آلية الاستشفاء الذاتي لإيموجي الصمت 🔇 في عنوان المجموعة (تفحص كل 15 ثانية كحد أقصى تلافياً لحظر الـ API)
   const nowTime = Date.now();
   if (!global.lastMuteTitleCheck[String(threadID)] || nowTime - global.lastMuteTitleCheck[String(threadID)] > 15000) {
     global.lastMuteTitleCheck[String(threadID)] = nowTime;
@@ -136,7 +153,6 @@ async function checkMutedGroupMessage(api, event) {
     } catch (titleErr) {}
   }
 
-  // 1. العضو غير المسجل -> حذف الرسالة وطرد فوري
   if (!player) {
     try {
       api.unsendMessage(messageID, () => {});
@@ -147,7 +163,6 @@ async function checkMutedGroupMessage(api, event) {
     return true; 
   }
 
-  // 2. اللاعب المسجل -> حذف الرسالة فوراً ومنحه إنذاراً تلقائياً
   try {
     api.unsendMessage(messageID, () => {});
   } catch (e) {}
@@ -155,12 +170,12 @@ async function checkMutedGroupMessage(api, event) {
   const currentWarnings = (player.warnings || 0) + 1;
   await updatePlayer(senderID, { warnings: currentWarnings });
 
-  // تعديل الكنية في قروب المملكة لتظهر الإنذارات بالدوائر الحمراء
   const gid = config.groupes[player.kingdom];
   if (gid) {
-    const { changePlayerNickname } = require('./dukhul');
     try {
-      await changePlayerNickname(api, gid, senderID, player.nickname, player.rank || 'مجند', player.class, currentWarnings);
+      const updatedPlayer = { ...player, warnings: currentWarnings };
+      const fullNick = await getDynamicNicknameForRouter(updatedPlayer);
+      await new Promise(r => api.changeNickname(fullNick, gid, senderID, () => r()));
     } catch (nickErr) {}
   }
 
@@ -170,7 +185,6 @@ async function checkMutedGroupMessage(api, event) {
   return true; 
 }
 
-// اعتراض التغيير اليدوي لاسم المجموعة لإعادة الإيموجي فوراً إذا كانت المجموعة في وضع الصمت
 async function handleThreadNameChange(api, event) {
   const { threadID, logMessageType, logMessageData } = event;
   if (logMessageType === 'log:thread-name') {
@@ -189,13 +203,11 @@ async function handleThreadNameChange(api, event) {
   }
 }
 
-// دالة تفعيل تجاهل اللاعب بإدخال الدقائق
 async function executeIgnoreCommand(api, event, operatorId, targetID) {
   const targetPlayer = await getPlayer(targetID);
   const operatorPlayer = await getPlayer(operatorId);
   const isOperatorAdminOrEmp = isAdmin(operatorId) || (operatorPlayer && operatorPlayer.rank === 'الامبراطور');
   
-  // حماية الإدارة العليا: نائب الإمبراطور لا يمكنه معاقبة الإمبراطور أو أدمن مسجل
   const targetIsAdminOrEmp = isAdmin(targetID) || (targetPlayer && targetPlayer.rank === 'الامبراطور');
   if (targetIsAdminOrEmp && !isOperatorAdminOrEmp) {
     await sendReply(api, `❌ خطأ: لا يمكنك تطبيق عقوبة التجاهل على الإمبراطور أو المشرفين.`, event.messageID, event.threadID);
@@ -212,14 +224,12 @@ async function executeIgnoreCommand(api, event, operatorId, targetID) {
   return true;
 }
 
-// دالة فك تجاهل اللاعب يدوياً
 async function executeUnignoreCommand(api, event, operatorId, targetID) {
   const db = require('./database').getDB();
   const targetPlayer = await getPlayer(targetID);
   const operatorPlayer = await getPlayer(operatorId);
   const isOperatorAdminOrEmp = isAdmin(operatorId) || (operatorPlayer && operatorPlayer.rank === 'الامبراطور');
   
-  // حماية الإدارة العليا
   const targetIsAdminOrEmp = isAdmin(targetID) || (targetPlayer && targetPlayer.rank === 'الامبراطور');
   if (targetIsAdminOrEmp && !isOperatorAdminOrEmp) {
     await sendReply(api, `❌ خطأ: لا يمكنك فك التجاهل عن الإمبراطور أو المشرفين.`, event.messageID, event.threadID);
@@ -235,13 +245,12 @@ async function executeUnignoreCommand(api, event, operatorId, targetID) {
   
   await db.collection('ignored_players').deleteOne({ fbId: targetID });
   
-  // إرجاع كنيته وحذف إيموجي كتم الصوت
   if (targetPlayer) {
-    const dbNickname = targetPlayer.nickname || '';
+    const fullNick = await getDynamicNicknameForRouter(targetPlayer, false);
     const victimGroupId = config.groupes[targetPlayer.kingdom];
     if (victimGroupId) {
       try {
-        await new Promise(resolve => api.changeNickname(dbNickname, victimGroupId, targetID, () => resolve()));
+        await new Promise(resolve => api.changeNickname(fullNick, victimGroupId, targetID, () => resolve()));
       } catch (e) {}
     }
   }
@@ -250,7 +259,6 @@ async function executeUnignoreCommand(api, event, operatorId, targetID) {
   return true;
 }
 
-// دالة مساعدة للتحقق من تجاهل لاعب
 async function isPlayerIgnored(fbId) {
   try {
     const db = require('./database').getDB();
@@ -267,15 +275,12 @@ async function isPlayerIgnored(fbId) {
   return false;
 }
 
-// يعالج أوامر الأدمن والإمبراطور والنائب عند المراسلة الخاصة (DM).
 async function handleAdminDM(api, event) {
   const { senderID } = event;
   const text = (event.body || '').trim();
 
-  // تنظيف جلسات التجاهل المنتهية
   await checkAndCleanExpiredIgnores(api).catch(() => {});
 
-  // --- معالجة فك وتطبيق التجاهل للأدمن / الامبراطور / النائب عبر المراسلة الخاصة ---
   const isIgnoreCmd = text.startsWith('تجاهل') || (event.type === 'message_reply' && text === 'تجاهل');
   const isUnignoreCmd = text.startsWith('فك التجاهل') || text.startsWith('فك_التجاهل') || (event.type === 'message_reply' && (text === 'فك التجاهل' || text === 'فك_التجاهل'));
 
@@ -333,18 +338,14 @@ async function handleAdminDM(api, event) {
   return false;
 }
 
-// يعالج أوامر الأدمن والإمبراطور والنائب داخل القروبات
 async function handleAdminGroup(api, event) {
   const { senderID } = event;
   const text = (event.body || '').trim();
 
-  // تنظيف جلسات التجاهل المنتهية
   await checkAndCleanExpiredIgnores(api).catch(() => {});
 
-  // فحص وتطبيق عقوبات الصمت أولاً في القروب
   if (await checkMutedGroupMessage(api, event)) return true;
 
-  // --- معالجة فك وتطبيق التجاهل للادمن / الامبراطور / نائب الامبراطور ---
   const isIgnoreCmd = text.startsWith('تجاهل') || (event.type === 'message_reply' && text === 'تجاهل');
   const isUnignoreCmd = text.startsWith('فك التجاهل') || text.startsWith('فك_التجاهل') || (event.type === 'message_reply' && (text === 'فك التجاهل' || text === 'فك_التجاهل'));
 
@@ -405,12 +406,10 @@ async function handleAdminGroup(api, event) {
   return false;
 }
 
-// يعالج جلسة اختيار قروب للإضافة، وجلسة اختيار رتبة، وجلسة إدخال وقت التجاهل
 async function handleAdminSessionState(api, event, adminSession) {
   const { senderID, threadID } = event;
   const text = (event.body || '').trim();
 
-  // جلسة إدخال دقائق التجاهل
   if (adminSession.state === 'AWAITING_IGNORE_DURATION') {
     if (text === 'خروج') {
       await deleteAdminSession(senderID);
@@ -436,14 +435,12 @@ async function handleAdminSessionState(api, event, adminSession) {
       { upsert: true }
     );
     
-    // تعديل الكنية لإضافة إيموجي الكتم 🔇 في قروب اللاعب
     if (victimPlayer) {
-      const dbNickname = victimPlayer.nickname || '';
-      const newChatNickname = `${dbNickname} 🔇`;
+      const fullNick = await getDynamicNicknameForRouter(victimPlayer, true);
       const victimGroupId = config.groupes[victimPlayer.kingdom];
       if (victimGroupId) {
         try {
-          await new Promise(resolve => api.changeNickname(newChatNickname, victimGroupId, targetID, () => resolve()));
+          await new Promise(resolve => api.changeNickname(fullNick, victimGroupId, targetID, () => resolve()));
         } catch (e) {
           console.error('[Ignore Nickname Change] Failed to set nickname:', e);
         }
@@ -512,7 +509,6 @@ async function handleAdminSessionState(api, event, adminSession) {
     );
 
     if (!limitsCheck.allowed) {
-      // إذا كانت الرتبة قابلة للاستبدال (لاعب واحد فقط يحملها)، نطلب تأكيد الاستبدال بدل الرفض المباشر
       if (limitsCheck.replaceable && limitsCheck.existingPlayer) {
         await setAdminSession(senderID, {
           state: 'AWAITING_RANK_REPLACE_CONFIRM',
@@ -563,9 +559,8 @@ async function handleAdminSessionState(api, event, adminSession) {
 
     const oldHolder = await getPlayer(oldHolderId);
 
-    // 1) تنزيل اللاعب القديم (صاحب الرتبة الحصرية) إلى رتبة مجند، وطرده من كل القروبات ما عدا مدينته الأصلية
     if (oldHolder) {
-      await updatePlayer(oldHolder.fbId, { rank: 'مجند' });
+      await updatePlayer(oldHolder.fbId, { rank: 'متدرب' });
 
       const { kickFromGroupsExceptOwnCity } = require('./admin_modules/helpers');
       try {
@@ -574,21 +569,21 @@ async function handleAdminSessionState(api, event, adminSession) {
         console.error('[Rank Replace] Error kicking old holder from groups:', e.message);
       }
 
-      const { broadcastPlayerNickname } = require('./dukhul');
-      try {
-        await broadcastPlayerNickname(api, { ...oldHolder, rank: 'مجند' });
-      } catch (e) {
-        console.error('[Rank Replace] Error broadcasting old holder nickname:', e.message);
+      const gidOld = config.groupes[oldHolder.kingdom];
+      if (gidOld) {
+        try {
+          const fullNickOld = await getDynamicNicknameForRouter({ ...oldHolder, rank: 'متدرب' });
+          await new Promise(r => api.changeNickname(fullNickOld, gidOld, oldHolder.fbId, () => r()));
+        } catch(e) {}
       }
     }
 
-    // 2) ترقية اللاعب الجديد للرتبة المطلوبة
     await applyRankChange(api, targetPlayer, newRank);
 
     await deleteAdminSession(senderID);
     await sendReply(api,
       `✅ تم الاستبدال بنجاح!\n` +
-      (oldHolder ? `› اللاعب [${oldHolder.nickname}] أصبحت رتبته (مجند) وتم إخراجه من قروبات مملكته/رتبته السابقة.\n` : '') +
+      (oldHolder ? `› اللاعب [${oldHolder.nickname}] أصبحت رتبته (متدرب) وتم إخراجه من قروبات مملكته/رتبته السابقة.\n` : '') +
       `› اللاعب [${targetPlayer.nickname}] أصبح برتبة (${newRank}).\n` +
       `سيصل الإشعار والتهنئة للاعبين عند إرسالهم لأي رسالة قادمة.`,
       event.messageID, threadID);
@@ -598,9 +593,17 @@ async function handleAdminSessionState(api, event, adminSession) {
   return false;
 }
 
-// يطبّق تغيير الرتبة فعلياً: تحديث قاعدة البيانات + نشر الكنية الجديدة على القروبات المناسبة حسب نطاق الرتبة
 async function applyRankChange(api, targetPlayer, selectedRank) {
   const oldRank = targetPlayer.rank || 'متدرب';
+  const updatedPlayer = {
+    ...targetPlayer,
+    rank: selectedRank,
+    pendingPromotionNotify: {
+      oldRank: oldRank,
+      newRank: selectedRank
+    }
+  };
+
   await updatePlayer(targetPlayer.fbId, {
     rank: selectedRank,
     pendingPromotionNotify: {
@@ -609,15 +612,17 @@ async function applyRankChange(api, targetPlayer, selectedRank) {
     }
   });
 
-  const { broadcastPlayerNickname } = require('./dukhul');
-  try {
-    await broadcastPlayerNickname(api, { ...targetPlayer, rank: selectedRank });
-  } catch (e) {
-    console.error('[Router] Error broadcasting nickname on manual promotion:', e.message);
+  const gid = config.groupes[targetPlayer.kingdom];
+  if (gid) {
+    try {
+      const fullNick = await getDynamicNicknameForRouter(updatedPlayer);
+      await new Promise(r => api.changeNickname(fullNick, gid, targetPlayer.fbId, () => r()));
+    } catch (e) {
+      console.error('[Router] Error broadcasting nickname on manual promotion:', e.message);
+    }
   }
 }
 
-// يعالج أوامر لوحة تحكم نائب الامبراطور (لوحة التحكم، بانكاي، معلومات، عقوبة، تجاهل، فك التجاهل، اضافة، مهام)
 async function handleDeputyEmperorCommands(api, event, player) {
   const { senderID, threadID } = event;
   const text = (event.body || '').trim();
@@ -627,10 +632,8 @@ async function handleDeputyEmperorCommands(api, event, player) {
   const isDeputy  = player && player.rank === 'نائب الامبراطور';
   if (!isEmperor && !isDeputy) return false;
 
-  // فحص الصمت أولاً في المجموعات
   if (await checkMutedGroupMessage(api, event)) return true;
 
-  // تنظيف جلسات التجاهل المنتهية
   await checkAndCleanExpiredIgnores(api).catch(() => {});
 
   if (text === 'لوحة التحكم') {
@@ -656,7 +659,6 @@ async function handleDeputyEmperorCommands(api, event, player) {
     }
     const targetID = String(event.messageReply.senderID);
     
-    // حماية الإدارة والامبراطور
     const victimPlayer = await getPlayer(targetID);
     const targetIsAdminOrEmp = isAdmin(targetID) || (victimPlayer && victimPlayer.rank === 'الامبراطور');
     if (targetIsAdminOrEmp) {
@@ -688,7 +690,6 @@ async function handleDeputyEmperorCommands(api, event, player) {
     }
     const targetID = String(event.messageReply.senderID);
     
-    // حماية الإدارة والامبراطور
     const victimPlayer = await getPlayer(targetID);
     const targetIsAdminOrEmp = isAdmin(targetID) || (victimPlayer && victimPlayer.rank === 'الامبراطور');
     if (targetIsAdminOrEmp) {
@@ -708,7 +709,6 @@ async function handleDeputyEmperorCommands(api, event, player) {
     }
     const targetID = String(event.messageReply.senderID);
     
-    // حماية الإدارة والامبراطور
     const victimPlayer = await getPlayer(targetID);
     const targetIsAdminOrEmp = isAdmin(targetID) || (victimPlayer && victimPlayer.rank === 'الامبراطور');
     if (targetIsAdminOrEmp) {
@@ -727,10 +727,9 @@ async function handleDeputyEmperorCommands(api, event, player) {
     try {
       const gid = config.groupes[victimPlayer.kingdom];
       if (gid) {
-        const { changePlayerNickname } = require('./dukhul');
-        await changePlayerNickname(
-          api, gid, targetID, victimPlayer.nickname, victimPlayer.rank || 'مجند', victimPlayer.class, currentWarnings
-        );
+        const updatedVictim = { ...victimPlayer, warnings: currentWarnings };
+        const fullNick = await getDynamicNicknameForRouter(updatedVictim);
+        await new Promise(r => api.changeNickname(fullNick, gid, targetID, () => r()));
       }
     } catch (nickErr) {
       console.error('[Deputy Punishment] Failed to update nickname:', nickErr.message);
@@ -802,7 +801,6 @@ async function handleDeputyEmperorCommands(api, event, player) {
   return false;
 }
 
-// يعالج أمر "تغيير الرتبة" (متاح للامبراطور/نائبه/أدمن النظام)
 async function handleChangeRankCommand(api, event) {
   const { senderID, threadID } = event;
   const text = (event.body || '').trim();
@@ -871,5 +869,6 @@ module.exports = {
   handleChangeRankCommand,
   checkMutedGroupMessage,
   handleThreadNameChange,
-  isPlayerIgnored
+  isPlayerIgnored,
+  getDynamicNicknameForRouter
 };
