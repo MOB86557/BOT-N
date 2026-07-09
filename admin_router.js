@@ -24,36 +24,10 @@ async function initMutedGroups() {
   }
 }
 
-// دالة موحدة لبناء الكنية ديناميكياً شاملة الرتب والرموز التعبيرية وحالة المشفى والتجاهل
+// دالة موحدة لبناء الكنية ديناميكياً شاملة الرتب والرموز التعبيرية وحالة المشفى والتجاهل عبر ملف الحماية الرئيسي
 async function getDynamicNicknameForRouter(player, forceMute = false) {
-  const { generateNickname } = require('./utils');
-  const baseRank = player.rank || 'متدرب';
-  let nick = generateNickname(player.nickname, baseRank, player.class, player.warnings || 0);
-
-  // 1. فحص حالة الإنعاش 🏥
-  const isRecovery = player.recoveryUntil && new Date(player.recoveryUntil).getTime() > Date.now();
-  if (isRecovery) {
-    nick += ' 🏥';
-  }
-
-  // 2. فحص حالة التجاهل والكتم 🔇
-  if (forceMute) {
-    if (!nick.includes('🔇')) {
-      nick += ' 🔇';
-    }
-  } else {
-    try {
-      const db = require('./database').getDB();
-      const isIgnored = await db.collection('ignored_players').findOne({ fbId: String(player.fbId) });
-      if (isIgnored) {
-        if (!nick.includes('🔇')) {
-          nick += ' 🔇';
-        }
-      }
-    } catch(e) {}
-  }
-
-  return nick;
+  const { getDynamicNickname } = require('./admin_modules/protection');
+  return getDynamicNickname(player, forceMute);
 }
 
 async function isAuthorizedForIgnore(senderID) {
