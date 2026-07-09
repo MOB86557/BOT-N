@@ -507,39 +507,114 @@ async function handleAdminSessionState(api, event, adminSession) {
     const limitsCheck = await checkManualRankLimits(
       selectedRank,
       targetPlayer.kingdom,
-      targetPlayer.registeredCityName || 'العاصمة'
+      targetPlayer.registeredCityName || 'العاصمة',
+      targetPlayer.fbId
     );
 
     if (!limitsCheck.allowed) {
+      // إذا كانت الرتبة قابلة للاستبدال (لاعب واحد فقط يحملها)، نطلب تأكيد الاستبدال بدل الرفض المباشر
+      if (limitsCheck.replaceable && limitsCheck.existingPlayer) {
+        await setAdminSession(senderID, {
+          state: 'AWAITING_RANK_REPLACE_CONFIRM',
+          targetPlayerId: targetPlayer.fbId,
+          oldHolderId: limitsCheck.existingPlayer.fbId,
+          newRank: selectedRank
+        });
+        await sendReply(api,
+          `⚠️ سيتم استبدال اللاعب [${limitsCheck.existingPlayer.nickname}] باللاعب [${targetPlayer.nickname}]\n` +
+          `لرتبة (${selectedRank})\n\n` +
+          `› أرسل 《 تأكيد 》 لتنفيذ الاستبدال\n` +
+          `› أرسل 《 الغاء 》 لإلغاء العملية`,
+          event.messageID, threadID);
+        return true;
+      }
+
       await sendReply(api, `❌ تعذر الترقية:\n⚠️ ${limitsCheck.reason}`, event.messageID, threadID);
       return true;
     }
 
-    const oldRank = targetPlayer.rank || 'متدرب';
-    await updatePlayer(targetPlayer.fbId, {
-      rank: selectedRank,
-      pendingPromotionNotify: {
-        oldRank: oldRank,
-        newRank: selectedRank
-      }
-    });
-
-    const { changePlayerNickname } = require('./dukhul');
-    const groupId = config.groupes[targetPlayer.kingdom];
-    if (groupId) {
-      try {
-        await changePlayerNickname(api, groupId, targetPlayer.fbId, targetPlayer.nickname, selectedRank, targetPlayer.class);
-      } catch (e) {
-        console.error('[Router] Error changing nickname on manual promotion:', e);
-      }
-    }
+    await applyRankChange(api, targetPlayer, selectedRank);
 
     await deleteAdminSession(senderID);
     await sendReply(api, `✅ تم تعيين رتبة اللاعب (${targetPlayer.nickname}) إلى (${selectedRank}) بنجاح!\nسيصل الإشعار والتهنئة للاعب عند إرساله لأي رسالة قادمة.`, event.messageID, threadID);
     return true;
   }
 
+  if (adminSession.state === 'AWAITING_RANK_REPLACE_CONFIRM') {
+    if (text === 'الغاء' || text === 'إلغاء') {
+      await deleteAdminSession(senderID);
+      await sendReply(api, `╮───∙⋆⋅「 تم إلغاء عملية الاستبدال 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.messageID, threadID);
+      return true;
+    }
+
+    if (text !== 'تأكيد') {
+      await sendReply(api, `⚠️ يرجى إرسال 《 تأكيد 》 لتنفيذ الاستبدال أو 《 الغاء 》 لإلغاء العملية.`, event.messageID, threadID);
+      return true;
+    }
+
+    const { targetPlayerId, oldHolderId, newRank } = adminSession;
+    const targetPlayer = await getPlayer(targetPlayerId);
+
+    if (!targetPlayer) {
+      await deleteAdminSession(senderID);
+      await sendReply(api, `❌ فشل العثور على اللاعب المستهدف.`, event.messageID, threadID);
+      return true;
+    }
+
+    const oldHolder = await getPlayer(oldHolderId);
+
+    // 1) تنزيل اللاعب القديم (صاحب الرتبة الحصرية) إلى رتبة مجند، وطرده من كل القروبات ما عدا مدينته الأصلية
+    if (oldHolder) {
+      await updatePlayer(oldHolder.fbId, { rank: 'مجند' });
+
+      const { kickFromGroupsExceptOwnCity } = require('./admin_modules/helpers');
+      try {
+        await kickFromGroupsExceptOwnCity(api, oldHolder.fbId, oldHolder.kingdom, oldHolder.registeredCityName || 'العاصمة');
+      } catch (e) {
+        console.error('[Rank Replace] Error kicking old holder from groups:', e.message);
+      }
+
+      const { broadcastPlayerNickname } = require('./dukhul');
+      try {
+        await broadcastPlayerNickname(api, { ...oldHolder, rank: 'مجند' });
+      } catch (e) {
+        console.error('[Rank Replace] Error broadcasting old holder nickname:', e.message);
+      }
+    }
+
+    // 2) ترقية اللاعب الجديد للرتبة المطلوبة
+    await applyRankChange(api, targetPlayer, newRank);
+
+    await deleteAdminSession(senderID);
+    await sendReply(api,
+      `✅ تم الاستبدال بنجاح!\n` +
+      (oldHolder ? `› اللاعب [${oldHolder.nickname}] أصبحت رتبته (مجند) وتم إخراجه من قروبات مملكته/رتبته السابقة.\n` : '') +
+      `› اللاعب [${targetPlayer.nickname}] أصبح برتبة (${newRank}).\n` +
+      `سيصل الإشعار والتهنئة للاعبين عند إرسالهم لأي رسالة قادمة.`,
+      event.messageID, threadID);
+    return true;
+  }
+
   return false;
+}
+
+// يطبّق تغيير الرتبة فعلياً: تحديث قاعدة البيانات + نشر الكنية الجديدة على القروبات المناسبة حسب نطاق الرتبة
+async function applyRankChange(api, targetPlayer, selectedRank) {
+  const oldRank = targetPlayer.rank || 'متدرب';
+  await updatePlayer(targetPlayer.fbId, {
+    rank: selectedRank,
+    pendingPromotionNotify: {
+      oldRank: oldRank,
+      newRank: selectedRank
+    }
+  });
+
+  const { broadcastPlayerNickname } = require('./dukhul');
+  try {
+    await broadcastPlayerNickname(api, { ...targetPlayer, rank: selectedRank });
+  } catch (e) {
+    console.error('[Router] Error broadcasting nickname on manual promotion:', e.message);
+  }
 }
 
 // يعالج أوامر لوحة تحكم نائب الامبراطور (لوحة التحكم، بانكاي، معلومات، عقوبة، تجاهل، فك التجاهل، اضافة، مهام)
