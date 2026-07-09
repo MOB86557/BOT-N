@@ -16,7 +16,33 @@ function _sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// تغيير كنية مع إعادة محاولة (لتفادي فشل فيسبوك المؤقت/الحظر المؤقت على الطلبات المتكررة)
+// دالة مساعدة لحساب الكنية ديناميكياً شاملة كافة الألقاب والرموز التعبيرية والحالات النشطة
+async function getDynamicNickname(player) {
+  const { getDB } = require('../database');
+  const db = getDB();
+  const baseRank = player.rank || 'متدرب';
+  let nick = generateNickname(player.nickname, baseRank, player.class, player.warnings || 0);
+
+  // 1. فحص حالة الإنعاش 🏥
+  const isRecovery = player.recoveryUntil && new Date(player.recoveryUntil).getTime() > Date.now();
+  if (isRecovery) {
+    nick += ' 🏥';
+  }
+
+  // 2. فحص حالة التجاهل والكتم 🔇
+  try {
+    const isIgnored = await db.collection('ignored_players').findOne({ fbId: String(player.fbId) });
+    if (isIgnored) {
+      if (!nick.includes('🔇')) {
+        nick += ' 🔇';
+      }
+    }
+  } catch (e) {}
+
+  return nick;
+}
+
+// تغيير كنية مع إعادة محاولة لتفادي الحظر المؤقت
 async function _changeNicknameSafe(api, nickname, threadID, userId, attempts = 3, delayMs = 1200) {
   for (let i = 1; i <= attempts; i++) {
     try {
@@ -41,7 +67,7 @@ async function snapshotNicknames() {
   const players = await getAllPlayers();
   const snap    = {};
   for (const p of players) {
-    snap[String(p.fbId)] = generateNickname(p.nickname, p.rank || 'مجند', p.class, p.warnings || 0);
+    snap[String(p.fbId)] = await getDynamicNickname(p);
   }
   const existing = await getProtectedState('global') || {};
   await saveProtectedState('global', { ...existing, nicknames: snap });
@@ -49,12 +75,10 @@ async function snapshotNicknames() {
 
 async function snapshotGroupNames() {
   const snap = {};
-  // حفظ أسماء العواصم الثلاث
   for (const k of ['solfare', 'niravil', 'murdak']) {
     const setting = await getGroupSetting(k);
     snap[k] = (setting && setting.customName) ? setting.customName : `مملكة ${kingdomNamesAr[k]}`;
   }
-  // حفظ أسماء المدن (الأفرع) بمفتاح threadId
   try {
     const { getDB } = require('../database');
     const cities = await getDB().collection('cities').find().toArray();
@@ -70,7 +94,6 @@ async function snapshotGroupNames() {
 
 async function snapshotGroupPhotos() {
   const snap = {};
-  // حفظ صور العواصم الثلاث
   for (const k of ['solfare', 'niravil', 'murdak']) {
     const setting = await getGroupSetting(k);
     const base64 = setting && setting.photoBase64;
@@ -79,14 +102,13 @@ async function snapshotGroupPhotos() {
     else if (url) snap[k] = { url };
     else console.warn(`[حماية] ⚠️ لا توجد صورة محفوظة لـ ${k}`);
   }
-  // حفظ صور المدن بمفتاح city_threadId
   try {
     const { getDB } = require('../database');
     const cities = await getDB().collection('cities').find().toArray();
     for (const city of cities) {
       if (!city.threadId) continue;
       const base64 = city.photoBase64;
-      const url    = city.photoUrl;
+      const url = city.photoUrl;
       if (base64) snap[`city_${city.threadId}`] = { base64, url };
       else if (url) snap[`city_${city.threadId}`] = { url };
     }
@@ -113,7 +135,7 @@ async function handleProtection(api, event, botId) {
     ''
   );
 
-  // ── حماية كنية البوت (مستقلة عن حماية كنيات اللاعبين) ──
+  // ── حماية كنية البوت ──
   if (settings.nicknames && event.logMessageType === 'log:user-nickname' && state.botNickname) {
     const changedIdBot = String(
       (event.logMessageData && (event.logMessageData.participant_id || event.logMessageData.participantId || event.logMessageData.participantID)) || ''
@@ -144,7 +166,7 @@ async function handleProtection(api, event, botId) {
     let protectedNick = null;
     const player = await getPlayer(changedId);
     if (player) {
-      protectedNick = generateNickname(player.nickname, player.rank || 'مجند', player.class, player.warnings || 0);
+      protectedNick = await getDynamicNickname(player);
     } else if (state.nicknames && state.nicknames[changedId]) {
       protectedNick = state.nicknames[changedId];
     }
@@ -164,10 +186,10 @@ async function handleProtection(api, event, botId) {
     return;
   }
 
+  // ── حماية أسماء القروبات ──
   if (settings.groupNames && event.logMessageType === 'log:thread-name') {
     if (!state.groupNames) return;
 
-    // فحص العواصم أولاً ثم المدن
     const kingdom = getKingdomByThreadId(event.threadID);
     const cityKey = `city_${event.threadID}`;
     const snapKey = kingdom || (state.groupNames[cityKey] !== undefined ? cityKey : null);
@@ -190,10 +212,10 @@ async function handleProtection(api, event, botId) {
     return;
   }
 
+  // ── حماية صور القروبات ──
   if (settings.groupPhotos && event.logMessageType === 'log:thread-image') {
     if (!state.groupPhotos) return;
 
-    // فحص العواصم أولاً ثم المدن
     const kingdom = getKingdomByThreadId(event.threadID);
     const cityKey = `city_${event.threadID}`;
     const photoEntry = kingdom
@@ -287,5 +309,6 @@ module.exports = {
   snapshotNicknames,
   snapshotGroupNames,
   snapshotGroupPhotos,
-  snapshotBotNickname
+  snapshotBotNickname,
+  getDynamicNickname
 };
