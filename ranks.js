@@ -104,12 +104,15 @@ async function checkAndApplyPromotions(fbId, api, threadID) {
         }
       });
 
-      // تغيير كنية اللاعب تلقائياً لمطابقة رتبته الجديدة (تُنشر تلقائياً بمدينته فقط، لأن هذه الرتب دون رتبة حارس)
-      const { broadcastPlayerNickname } = require('./dukhul');
-      try {
-        await broadcastPlayerNickname(api, { ...player, rank: nextRank });
-      } catch (e) {
-        console.error('[Ranks] Error changing nickname on auto promotion:', e);
+      // تغيير كنية اللاعب تلقائياً لمطابقة رتبته الجديدة بالقروب
+      const { changePlayerNickname } = require('./dukhul');
+      const groupId = config.groupes[player.kingdom];
+      if (groupId) {
+        try {
+          await changePlayerNickname(api, groupId, fbId, player.nickname, nextRank, player.class);
+        } catch (e) {
+          console.error('[Ranks] Error changing nickname on auto promotion:', e);
+        }
       }
 
       // تاريخ الوصول للغرض الإحصائي
@@ -128,52 +131,27 @@ async function checkAndApplyPromotions(fbId, api, threadID) {
 /**
  * التحقق من قيود الأعداد القصوى للرتب الإدارية اليدوية
  */
-async function checkManualRankLimits(targetRank, targetKingdom, targetCityName, excludeFbId) {
+async function checkManualRankLimits(targetRank, targetKingdom, targetCityName) {
   const db = getDB();
-  const excludeFilter = excludeFbId ? { fbId: { $ne: String(excludeFbId) } } : {};
-
-  // الرتب الحصرية (لاعب واحد فقط): لا تُرفض العملية، بل تُرجع بيانات صاحب الرتبة الحالي
-  // ليتمكن المستدعي من عرض تأكيد "استبدال" بدل رسالة رفض جامدة
+  
   if (targetRank === 'الامبراطور') {
-    const existing = await db.collection('players').findOne({ rank: 'الامبراطور', ...excludeFilter });
-    if (existing) {
-      return {
-        allowed: false,
-        replaceable: true,
-        existingPlayer: existing,
-        reason: 'لا يمكن تعيين أكثر من إمبراطور واحد في النظام بأكمله!'
-      };
-    }
+    const count = await db.collection('players').countDocuments({ rank: 'الامبراطور' });
+    if (count >= 1) return { allowed: false, reason: 'لا يمكن تعيين أكثر من إمبراطور واحد في النظام بأكمله!' };
   }
 
   if (['الحاكم', 'نائب الحاكم', 'جنرال'].includes(targetRank)) {
-    const existing = await db.collection('players').findOne({ rank: targetRank, kingdom: targetKingdom, ...excludeFilter });
-    if (existing) {
-      return {
-        allowed: false,
-        replaceable: true,
-        existingPlayer: existing,
-        reason: `يوجد بالفعل لاعب برتبة (${targetRank}) في مملكة ${targetKingdom} (الحد الأقصى: 1 لكل مملكة)`
-      };
-    }
+    const count = await db.collection('players').countDocuments({ rank: targetRank, kingdom: targetKingdom });
+    if (count >= 1) return { allowed: false, reason: `يوجد بالفعل لاعب برتبة (${targetRank}) في مملكة ${targetKingdom} (الحد الأقصى: 1 لكل مملكة)` };
   }
 
   if (targetRank === 'قائد') {
-    const existing = await db.collection('players').findOne({ rank: 'قائد', registeredCityName: targetCityName, kingdom: targetKingdom, ...excludeFilter });
-    if (existing) {
-      return {
-        allowed: false,
-        replaceable: true,
-        existingPlayer: existing,
-        reason: `يوجد بالفعل قائد معين لهذه المدينة (${targetCityName}) في هذه المملكة.`
-      };
-    }
+    const count = await db.collection('players').countDocuments({ rank: 'قائد', registeredCityName: targetCityName, kingdom: targetKingdom });
+    if (count >= 1) return { allowed: false, reason: `يوجد بالفعل قائد معين لهذه المدينة (${targetCityName}) في هذه المملكة.` };
   }
 
-  // مدرب: الحد الأقصى 2 لكل مدينة — يبقى رفض مباشر (لا يوجد "شخص واحد" ليُستبدل)
   if (targetRank === 'مدرب') {
-    const count = await db.collection('players').countDocuments({ rank: 'مدرب', registeredCityName: targetCityName, kingdom: targetKingdom, ...excludeFilter });
-    if (count >= 2) return { allowed: false, replaceable: false, reason: `تم الوصول للحد الأقصى من المدربين في هذه المدينة (${targetCityName}) (الحد الأقصى: 2 مدربين لكل مدينة)` };
+    const count = await db.collection('players').countDocuments({ rank: 'مدرب', registeredCityName: targetCityName, kingdom: targetKingdom });
+    if (count >= 2) return { allowed: false, reason: `تم الوصول للحد الأقصى من المدربين في هذه المدينة (${targetCityName}) (الحد الأقصى: 2 مدربين لكل مدينة)` };
   }
 
   return { allowed: true };
