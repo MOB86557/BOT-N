@@ -554,22 +554,57 @@ async function handleBotGroupsSession(api, event, session) {
 //   إعادة ضبط النظام الشاملة (دعم الممالك والمدن)
 // ═════════════════════════════════════════════════════════════════════
 
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// تغيير كنية مع إعادة محاولة (لتفادي فشل/حظر فيسبوك المؤقت على الطلبات المتكررة)
+async function _changeNicknameSafe(api, nickname, threadID, userId, attempts = 3, delayMs = 1200) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await new Promise((resolve, reject) => {
+        api.changeNickname(nickname, String(threadID), String(userId), (err) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+      return true;
+    } catch (e) {
+      if (i === attempts) {
+        console.error(`❌ فشل نهائي في تغيير كنية ${userId} في ${threadID} بعد ${attempts} محاولات:`, e.message || e);
+        return false;
+      }
+      await _sleep(delayMs);
+    }
+  }
+  return false;
+}
+
 async function handleEadatDabt(api, event) {
   const { threadID } = event;
-  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط 」\n│\n│ › جارِ إعادة ضبط الكنيات والمدن وأسماء وصور القروبات...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط 」\n│\n│ › جارِ إعادة ضبط الكنيات والمدن وأسماء وصور القروبات...\n│ › قد تستغرق العملية بعض الوقت حسب عدد اللاعبين\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
   const players = await getAllPlayers();
-  let done = 0;
+  const allGroupIds = Object.values(config.groupes).filter(Boolean);
+  let done = 0, failed = 0;
+
   for (const p of players) {
-    const groupId = config.groupes[p.kingdom]; if (!groupId) continue;
-    try { const nn = generateNickname(p.nickname, p.rank || 'مجند', p.class, p.warnings || 0); await new Promise(r => api.changeNickname(nn, groupId, String(p.fbId), () => r())); done++; } catch (e) {}
+    const nn = generateNickname(p.nickname, p.rank || 'مجند', p.class, p.warnings || 0);
+    // الامبراطور ونائب الامبراطور موجودون في الممالك الثلاث، فيجب تصحيح كنيتهم في كل مملكة
+    const isTopRank = p.rank === 'الامبراطور' || p.rank === 'نائب الامبراطور';
+    const targetGroupIds = isTopRank ? allGroupIds : [config.groupes[p.kingdom]].filter(Boolean);
+
+    for (const groupId of targetGroupIds) {
+      const ok = await _changeNicknameSafe(api, nn, groupId, p.fbId);
+      if (ok) done++; else failed++;
+      await _sleep(500); // تأخير بسيط بين كل طلب وآخر لتفادي حظر فيسبوك المؤقت
+    }
   }
+
   const botNickSetting = await getGroupSetting('bot_global');
   const defaultBotNick = botNickSetting && botNickSetting.botNickname ? botNickSetting.botNickname : null;
   if (defaultBotNick) {
     const botId = api.getCurrentUserID ? (typeof api.getCurrentUserID === 'function' ? api.getCurrentUserID() : api.getCurrentUserID) : null;
     if (botId) {
-      for (const gid of Object.values(config.groupes).filter(Boolean)) {
-        try { await new Promise(r => api.changeNickname(defaultBotNick, String(gid), String(botId), () => r())); } catch(e) {}
+      for (const gid of allGroupIds) {
+        await _changeNicknameSafe(api, defaultBotNick, gid, botId);
+        await _sleep(500);
       }
     }
   }
@@ -627,7 +662,7 @@ async function handleEadatDabt(api, event) {
     console.error('Error resetting cities:', e.message);
   }
 
-  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط الشاملة 」\n│\n│ › كنيات الممالك مُعادة : ${done}\n│ › أسماء وصور قروبات العواصم : تمت إعادتها ✅\n│ › أسماء وصور قروبات مدن الممالك : تمت إعادتها ✅\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط الشاملة 」\n│\n│ › كنيات مُعادة بنجاح : ${done}\n│ › كنيات فشلت (راجع اللوق) : ${failed}\n│ › أسماء وصور قروبات العواصم : تمت إعادتها ✅\n│ › أسماء وصور قروبات مدن الممالك : تمت إعادتها ✅\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
 async function handleQarobaat(api, event) {
