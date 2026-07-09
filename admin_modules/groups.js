@@ -916,7 +916,7 @@ module.exports = {
   handleBotGroupsSession,
   handleMessageRequests,
   handleMessageRequestsSession
-};�ح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+};
       } catch (e) {
         await deleteAdminSession(senderID);
         await sendMessage(api, `❌ فشل رفض الطلب: ${e.message || e}`, threadID);
