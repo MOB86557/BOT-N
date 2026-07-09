@@ -12,6 +12,31 @@ function _lock(key, ms) {
   setTimeout(() => _protectionLocks.delete(key), ms);
 }
 
+function _sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// تغيير كنية مع إعادة محاولة (لتفادي فشل فيسبوك المؤقت/الحظر المؤقت على الطلبات المتكررة)
+async function _changeNicknameSafe(api, nickname, threadID, userId, attempts = 3, delayMs = 1200) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await new Promise((resolve, reject) => {
+        api.changeNickname(nickname, String(threadID), String(userId), (err) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+      return true;
+    } catch (e) {
+      if (i === attempts) {
+        console.error(`❌ فشل نهائي في تغيير كنية ${userId} في ${threadID} بعد ${attempts} محاولات:`, e.message || e);
+        return false;
+      }
+      await _sleep(delayMs);
+    }
+  }
+  return false;
+}
+
 async function snapshotNicknames() {
   const players = await getAllPlayers();
   const snap    = {};
@@ -99,9 +124,8 @@ async function handleProtection(api, event, botId) {
         if (botId && eventAuthor && eventAuthor === String(botId)) return;
         const lockKeyBot = `nick_bot_${event.threadID}`;
         if (_protectionLocks.has(lockKeyBot)) return;
-        _lock(lockKeyBot, 6000);
-        try { await new Promise(r => api.changeNickname(state.botNickname, event.threadID, String(botId), () => r())); }
-        catch(e) { console.error('❌ خطأ حماية كنية البوت:', e.message || e); }
+        _lock(lockKeyBot, 8000);
+        await _changeNicknameSafe(api, state.botNickname, event.threadID, botId);
         return;
       }
       return;
@@ -134,13 +158,9 @@ async function handleProtection(api, event, botId) {
 
     const lockKey = `nick_${changedId}`;
     if (_protectionLocks.has(lockKey)) return;
-    _lock(lockKey, 6000);
+    _lock(lockKey, 8000);
 
-    try {
-      await new Promise((resolve) => {
-        api.changeNickname(protectedNick, event.threadID, changedId, () => resolve());
-      });
-    } catch (e) { console.error('❌ خطأ حماية الكنية:', e.message || e); }
+    await _changeNicknameSafe(api, protectedNick, event.threadID, changedId);
     return;
   }
 
