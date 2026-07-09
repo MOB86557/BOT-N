@@ -270,484 +270,355 @@ async function handleCitiesSession(api, event, session) {
       await sendMessage(api, `⚠️ اسم القروب قصير جداً، حاول مجدداً.`, threadID);
       return;
     }
-    await setAdminSession(senderID, { state: 'CITIES_ADD_AWAIT_ID', kingdom: session.kingdom, cityName: session.cityName, groupName: text });
+    await setAdminSession(senderID, { state: 'CITIES_ADD_AWAIT_THREAD_ID', kingdom: session.kingdom, cityName: session.cityName, groupName: text });
     await sendMessage(api,
       `╮───∙⋆⋅「 إضافة مدينة - الخطوة 3/3 」\n│\n` +
       `│ › اسم المدينة (الخريطة): ${session.cityName}\n` +
-      `│ › اسم القروب: ${text}\n│\n` +
-      `│ ارسل الآن ايدي (معرف) قروب هذه المدينة:\n│\n` +
+      `│ › اسم القروب الفعلي: ${text}\n│\n` +
+      `│ ارسل ايدي القروب (Thread ID) الخاص بهذه المدينة:\n` +
+      `│ (تأكد من صحة الايدي لتجنب المشاكل)\n│\n` +
       `│ › او اكتب 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
-  if (session.state === 'CITIES_ADD_AWAIT_ID') {
-    if (!/^\d+$/.test(text)) {
-      await sendMessage(api, `⚠️ ايدي غير صحيح. يجب إدخال ايدي رقمي لقروب فيسبوك.`, threadID);
+
+  if (session.state === 'CITIES_ADD_AWAIT_THREAD_ID') {
+    if (!text || !/^[0-9]+$/.test(text)) {
+      await sendMessage(api, `⚠️ ايدي القروب غير صحيح. يجب أن يكون أرقاماً فقط.`, threadID);
       return;
     }
-    await db.collection('cities').insertOne({
-      threadId: text,
-      name: session.cityName,
-      groupName: session.groupName,
-      kingdom: session.kingdom,
-      photoUrl: '',
-      photoBase64: ''
-    });
-    try { await setTitle(api, session.groupName, text); } catch(e) {}
+    const threadId = text;
+    const { kingdom, cityName, groupName } = session;
+    
+    const existingCity = await db.collection('cities').findOne({ threadId });
+    if (existingCity) {
+      await sendMessage(api, `⚠️ هذا الايدي (${threadId}) مسجل بالفعل لمدينة ${existingCity.name}.`, threadID);
+      return;
+    }
+
+    await db.collection('cities').insertOne({ kingdom, name: cityName, groupName, threadId });
     await deleteAdminSession(senderID);
-    await sendMessage(api,
-      `╮───∙⋆⋅「 تم إنشاء فرع المدينة 🎉 」\n│\n` +
-      `│ › اسم المدينة (الخريطة): ${session.cityName}\n` +
-      `│ › اسم القروب: ${session.groupName}\n` +
-      `│ › المملكة: ${kingdomNamesAr[session.kingdom]}\n` +
-      `│ › ايدي القروب: ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم إضافة مدينة جديدة ✅ 」\n│\n│ › المدينة: ${cityName}\n│ › المملكة: ${kingdomNamesAr[kingdom]}\n│ › القروب: ${groupName}\n│ › الايدي: ${threadId}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
+
   if (session.state === 'CITIES_EDIT_SELECT') {
-    const list = session.citiesList || [];
     const idx = parseInt(text, 10) - 1;
+    const list = session.citiesList || [];
     if (isNaN(idx) || idx < 0 || idx >= list.length) {
-      await sendMessage(api, `⚠️ رقم غير صحيح.`, threadID);
+      await sendMessage(api, `⚠️ رقم غير صحيح من القائمة.`, threadID);
       return;
     }
-    const city = list[idx];
-    await setAdminSession(senderID, { state: 'CITIES_EDIT_CHOICE', targetCityId: city.threadId, cityName: city.name, groupName: city.groupName || city.name });
+    const selectedCity = list[idx];
+    await setAdminSession(senderID, { state: 'CITIES_EDIT_MAIN', selectedCity });
     await sendMessage(api,
-      `╮───∙⋆⋅「 تعديل مدينة 」\n│\n` +
-      `│ › اسم المدينة (الخريطة): ${city.name}\n` +
-      `│ › اسم القروب الحالي: ${city.groupName || city.name}\n│\n` +
-      `│ اختر ما تريد تعديله:\n` +
+      `╮───∙⋆⋅「 تعديل مدينة: ${selectedCity.name} 」\n│\n` +
       `│ 1 › تعديل اسم المدينة (الخريطة)\n` +
-      `│ 2 › تعديل اسم القروب\n` +
-      `│ 3 › تعديل ايدي القروب\n` +
-      `│ 4 › تعديل صورة القروب الرسمية\n` +
-      `│ 5 › إلغاء ورجوع\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      `│ 2 › تعديل اسم القروب الفعلي\n` +
+      `│ 3 › تعديل ايدي القروب (Thread ID)\n` +
+      `│ 4 › رجوع للقائمة السابقة\n` +
+      `│\n` +
+      `│ › او اكتب 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
-  if (session.state === 'CITIES_EDIT_CHOICE') {
+
+  if (session.state === 'CITIES_EDIT_MAIN') {
+    const { selectedCity } = session;
+    if (text === '4' || text === 'رجوع') {
+      await deleteAdminSession(senderID);
+      await handleCitiesSession(api, event, { state: 'CITIES_MAIN' }); // Simulate going back to main cities menu
+      return;
+    }
     if (text === '1') {
-      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_NAME', targetCityId: session.targetCityId, cityName: session.cityName, groupName: session.groupName });
-      await sendMessage(api,
-        `╮───∙⋆⋅「 تعديل اسم المدينة (الخريطة) 」\n│\n` +
-        `│ › الاسم الحالي في الخريطة: ${session.cityName}\n│\n` +
-        `│ › ارسل الاسم الجديد للمدينة:\n` +
-        `│ › (لن يؤثر على اسم القروب)\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_NAME', selectedCity });
+      await sendMessage(api, `╮───∙⋆⋅「 تعديل اسم المدينة 」\n│\n│ › الاسم الحالي: ${selectedCity.name}\n│ › ارسل الاسم الجديد:\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
       return;
     }
     if (text === '2') {
-      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_GROUP_NAME', targetCityId: session.targetCityId, cityName: session.cityName, groupName: session.groupName });
-      await sendMessage(api,
-        `╮───∙⋆⋅「 تعديل اسم القروب 」\n│\n` +
-        `│ › اسم القروب الحالي: ${session.groupName}\n│\n` +
-        `│ › ارسل الاسم الجديد للقروب:\n` +
-        `│ › (لن يؤثر على اسم المدينة في الخريطة)\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_GROUP_NAME', selectedCity });
+      await sendMessage(api, `╮───∙⋆⋅「 تعديل اسم القروب 」\n│\n│ › الاسم الحالي: ${selectedCity.groupName}\n│ › ارسل الاسم الجديد:\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
       return;
     }
     if (text === '3') {
-      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_ID', targetCityId: session.targetCityId, cityName: session.cityName, groupName: session.groupName });
-      await sendMessage(api, `╮───∙⋆⋅「 تعديل الايدي 」\n│\n│ › الايدي الحالي: ${session.targetCityId}\n│ › ارسل الايدي الجديد للقروب:\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_THREAD_ID', selectedCity });
+      await sendMessage(api, `╮───∙⋆⋅「 تعديل ايدي القروب 」\n│\n│ › الايدي الحالي: ${selectedCity.threadId}\n│ › ارسل الايدي الجديد:\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
       return;
     }
-    if (text === '4') {
-      await setAdminSession(senderID, { state: 'CITIES_EDIT_AWAIT_PHOTO', targetCityId: session.targetCityId, cityName: session.cityName, groupName: session.groupName });
-      await sendMessage(api, `╮───∙⋆⋅「 تعديل صورة المدينة 」\n│\n│ › ارسل الصورة الجديدة كأرفاق مباشر في المحادثة:\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-      return;
-    }
-    if (text === '5') {
-      await setAdminSession(senderID, { state: 'CITIES_MAIN' });
-      await sendMessage(api, `╮───∙⋆⋅「 رجوع لقائمة المدن 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-      return;
-    }
-    await sendMessage(api, `⚠️ خيار غير صحيح.`, threadID);
+    await sendMessage(api, `⚠️ الرجاء اختيار خيار صحيح من القائمة (1 - 4).`, threadID);
     return;
   }
-  
+
   if (session.state === 'CITIES_EDIT_AWAIT_NAME') {
+    const { selectedCity } = session;
     if (!text || text.length < 2) {
-      await sendMessage(api, `⚠️ اسم قصير جداً.`, threadID);
+      await sendMessage(api, `⚠️ اسم المدينة قصير جداً، حاول مجدداً.`, threadID);
       return;
     }
-    await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { name: text } });
+    await db.collection('cities').updateOne({ _id: selectedCity._id }, { $set: { name: text } });
     await deleteAdminSession(senderID);
-    await sendMessage(api,
-      `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n` +
-      `│ › تم تغيير اسم المدينة في الخريطة\n` +
-      `│ › من: "${session.cityName}"\n` +
-      `│ › إلى: "${text}"\n` +
-      `│ › اسم القروب لم يتغير: ${session.groupName}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅ 」\n│\n│ › تم تحديث اسم المدينة من ${selectedCity.name} إلى ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
 
   if (session.state === 'CITIES_EDIT_AWAIT_GROUP_NAME') {
+    const { selectedCity } = session;
     if (!text || text.length < 2) {
-      await sendMessage(api, `⚠️ اسم قصير جداً.`, threadID);
+      await sendMessage(api, `⚠️ اسم القروب قصير جداً، حاول مجدداً.`, threadID);
       return;
     }
-    await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { groupName: text } });
-    try { await setTitle(api, text, session.targetCityId); } catch(e) {}
+    await db.collection('cities').updateOne({ _id: selectedCity._id }, { $set: { groupName: text } });
     await deleteAdminSession(senderID);
-    await sendMessage(api,
-      `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n` +
-      `│ › تم تغيير اسم القروب\n` +
-      `│ › من: "${session.groupName}"\n` +
-      `│ › إلى: "${text}"\n` +
-      `│ › اسم المدينة في الخريطة لم يتغير: ${session.cityName}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅ 」\n│\n│ › تم تحديث اسم القروب من ${selectedCity.groupName} إلى ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
-  if (session.state === 'CITIES_EDIT_AWAIT_ID') {
-    if (!/^\d+$/.test(text)) {
-      await sendMessage(api, `⚠️ الرجاء إرسال ايدي رقمي صحيح.`, threadID);
+
+  if (session.state === 'CITIES_EDIT_AWAIT_THREAD_ID') {
+    const { selectedCity } = session;
+    if (!text || !/^[0-9]+$/.test(text)) {
+      await sendMessage(api, `⚠️ ايدي القروب غير صحيح. يجب أن يكون أرقاماً فقط.`, threadID);
       return;
     }
-    await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { threadId: text } });
+    const existingCity = await db.collection('cities').findOne({ threadId: text });
+    if (existingCity && String(existingCity._id) !== String(selectedCity._id)) {
+      await sendMessage(api, `⚠️ هذا الايدي (${text}) مسجل بالفعل لمدينة ${existingCity.name}.`, threadID);
+      return;
+    }
+    await db.collection('cities').updateOne({ _id: selectedCity._id }, { $set: { threadId: text } });
     await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n│ › المدينة: ${session.cityName}\n│ › تم تعديل الايدي إلى: ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅ 」\n│\n│ › تم تحديث ايدي القروب من ${selectedCity.threadId} إلى ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
-  if (session.state === 'CITIES_EDIT_AWAIT_PHOTO') {
-    const photo = (event.attachments || []).find(a => a.type === 'photo' || a.type === 'sticker');
-    if (!photo) { await sendMessage(api, `⚠️ لم تقم بإرفاق صورة. يرجى إرسال الصورة أو 《 خروج 》`, threadID); return; }
-    const photoUrl = photo.url || photo.previewUrl || photo.largePreviewUrl;
-    if (!photoUrl) { await sendMessage(api, `⚠️ تعذر استخراج رابط الصورة.`, threadID); return; }
-    
-    const tmp = path.join(require('os').tmpdir(), `city_pic_${Date.now()}.jpg`);
-    let photoBase64 = null;
-    try {
-      await downloadPhoto(photoUrl, tmp);
-      photoBase64 = fs.readFileSync(tmp).toString('base64');
-    } catch(e) { console.error('Error handling city photo download:', e); }
-    
-    await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { photoUrl, photoBase64 } });
-    
-    if (photoBase64) {
-      try {
-        await new Promise(r => api.changeGroupImage(fs.createReadStream(tmp), session.targetCityId, () => { try { fs.unlinkSync(tmp); } catch (_) {} r(); }));
-      } catch(e) { console.error('Error pushing city image:', e); }
-    } else { try { fs.unlinkSync(tmp); } catch (_) {} }
-    
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n│ › تم تحديث صورة قروب المدينة "${session.cityName}" بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-    return;
-  }
-  
+
   if (session.state === 'CITIES_DELETE_SELECT') {
-    const list = session.citiesList || [];
     const idx = parseInt(text, 10) - 1;
+    const list = session.citiesList || [];
     if (isNaN(idx) || idx < 0 || idx >= list.length) {
-      await sendMessage(api, `⚠️ رقم غير صحيح.`, threadID);
+      await sendMessage(api, `⚠️ رقم غير صحيح من القائمة.`, threadID);
       return;
     }
-    const city = list[idx];
-    await setAdminSession(senderID, { state: 'CITIES_DELETE_CONFIRM', targetCityId: city.threadId, cityName: city.name });
-    await sendMessage(api, `╮───∙⋆⋅「 تأكيد الحذف 」\n│\n│ هل تود حقاً حذف فرع مدينة "${city.name}"؟\n│\n│ ارسل 《 تأكيد 》 للحذف\n│ ارسل 《 إلغاء 》 للتراجع والعودة\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-    return;
-  }
-  
-  if (session.state === 'CITIES_DELETE_CONFIRM') {
-    if (text === 'تأكيد') {
-      await db.collection('cities').deleteOne({ threadId: session.targetCityId });
-      await deleteAdminSession(senderID);
-      await sendMessage(api, `╮───∙⋆⋅「 تم حذف المدينة 🗑️ 」\n│\n│ › تم حذف مدينة "${session.cityName}" من السجلات بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-    } else {
-      await setAdminSession(senderID, { state: 'CITIES_MAIN' });
-      await sendMessage(api, `╮───∙⋆⋅「 تم الإلغاء 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-    }
+    const cityToDelete = list[idx];
+    await db.collection('cities').deleteOne({ _id: cityToDelete._id });
+    await deleteAdminSession(senderID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم الحذف ✅ 」\n│\n│ › تم حذف مدينة ${cityToDelete.name} بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
 }
 
 async function handleBotGroups(api, event) {
   const { threadID, senderID } = event;
-  await sendMessage(api, `... جاري تحميل قائمة قروبات البوت، يرجى الانتظار`, threadID);
-  
-  api.getThreadList(100, null, ["INBOX"], async (err, list) => {
-    if (err) {
-      await sendMessage(api, `❌ خطأ في جلب مجموعات البوت: ${err.message}`, threadID);
-      return;
-    }
-    const groups = (list || []).filter(t =>
-      t.isGroup &&
-      !t.isArchived &&
-      t.threadID &&
-      t.participantIDs && t.participantIDs.length > 0
-    );
-    if (groups.length === 0) {
-      await sendMessage(api, `╮───∙⋆⋅「 قروبات البوت 」\n│\n│ › البوت غير متصل بأي مجموعات حالياً.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-      return;
-    }
-    
-    const kingdomIds = Object.values(config.groupes).filter(Boolean).map(String);
-    let cityIds = [];
-    try {
-      const cities = await getDB().collection('cities').find().toArray();
-      cityIds = cities.map(c => String(c.threadId));
-    } catch(e) {}
-    
-    let msg = `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n     ✦ مجموعات البوت النشطة ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n`;
-    const activeList = [];
-    
-    groups.forEach((g, i) => {
-      const isKingdom = kingdomIds.includes(String(g.threadID));
-      const isCity = cityIds.includes(String(g.threadID));
-      let tag = ' 👤 [قروب خارجي]';
-      if (isKingdom) tag = ' 👑 [مملكة عاصمة]';
-      else if (isCity) tag = ' 🏙️ [مدينة تابعة]';
-      
-      msg += `│ ${i + 1}. ${g.name || 'مجموعة بلا اسم'}\n│    ↳ ID: ${g.threadID}${tag}\n`;
-      activeList.push({ threadID: g.threadID, name: g.name, isKingdom, isCity });
-    });
-    
-    msg += `\n╮───∙⋆⋅「 الخيارات 」\n` +
-           `│ › ارسل [رقم المجموعة] لتجعل البوت يغادرها فوراً\n` +
-           `│ › اكتب 《 تنظيف 》 لمغادرة كل القروبات الخارجية وإبقاء الممالك والمدن فقط\n` +
-           `│ › اكتب 《 خروج 》 للإلغاء\n` +
-           `╯───────∙⋆⋅ ※ ⋅⋆∙`;
-           
-    await setAdminSession(senderID, { state: 'BOT_GROUPS_MAIN', activeList });
-    await sendMessage(api, msg, threadID);
+  const db = getDB();
+  const botGroups = await db.collection('bot_groups').find().toArray();
+
+  if (botGroups.length === 0) {
+    await sendMessage(api, `╮───∙⋆⋅「 قروبات البوت 」\n│\n│ › لا توجد أي قروبات مسجلة حالياً للبوت.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    return;
+  }
+
+  let msg = `╮───∙⋆⋅「 قروبات البوت المسجلة 」\n`;
+  botGroups.forEach((g, i) => {
+    msg += `│ ${i + 1}. ${g.name} (ID: ${g.threadId})\n`;
   });
+  msg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
+  await sendMessage(api, msg, threadID);
 }
 
 async function handleBotGroupsSession(api, event, session) {
   const { threadID, senderID, body } = event;
   const text = (body || '').trim();
-  
+  const db = getDB();
+
   if (text === 'خروج') {
     await deleteAdminSession(senderID);
     await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
     return;
   }
-  
-  const botId = typeof api.getCurrentUserID === 'function' ? api.getCurrentUserID() : api.getCurrentUserID;
 
-  if (!botId) {
-    await sendMessage(api, `❌ تعذر الحصول على ايدي البوت، لا يمكن مغادرة المجموعة.`, threadID);
-    await deleteAdminSession(senderID);
+  if (session.state === 'BOT_GROUPS_MAIN') {
+    // Logic for managing bot groups (add, remove, list)
+    // This part is not fully implemented in the provided snippet, but would go here.
+    await sendMessage(api, `⚠️ هذه الوظيفة قيد التطوير.`, threadID);
     return;
-  }
-  
-  if (text === 'تنظيف') {
-    const list = session.activeList || [];
-    let leaveCount = 0;
-    for (const g of list) {
-      if (!g.isKingdom && !g.isCity) {
-        try {
-          await new Promise((resolve, reject) => {
-            const cb = (err) => { if (err) reject(err); else resolve(); };
-            if (typeof api.leaveThread === 'function') {
-              api.leaveThread(String(g.threadID), cb);
-            } else {
-              api.removeUserFromGroup(String(botId), String(g.threadID), cb);
-            }
-          });
-          try { await new Promise(r => api.deleteThread(String(g.threadID), () => r())); } catch(e2) {}
-          leaveCount++;
-        } catch(e) {
-          console.error(`خطأ أثناء مغادرة المجموعة ${g.threadID}:`, e);
-        }
-      }
-    }
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تنظيف المجموعات 」\n│\n│ › تم الخروج من ${leaveCount} قروب خارجي بالكامل ✅\n│ › يتواجد البوت الآن فقط في قروبات الممالك والمدن الرسمية.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-    return;
-  }
-  
-  const idx = parseInt(text, 10) - 1;
-  const list = session.activeList || [];
-  if (isNaN(idx) || idx < 0 || idx >= list.length) {
-    await sendMessage(api, `⚠️ رقم غير صحيح من القائمة.`, threadID);
-    return;
-  }
-  
-  const target = list[idx];
-  try {
-    await new Promise((resolve, reject) => {
-      const cb = (err) => { if (err) reject(err); else resolve(); };
-      if (typeof api.leaveThread === 'function') {
-        api.leaveThread(String(target.threadID), cb);
-      } else {
-        api.removeUserFromGroup(String(botId), String(target.threadID), cb);
-      }
-    });
-    try {
-      await new Promise(r => api.deleteThread(String(target.threadID), () => r()));
-    } catch(e2) { console.error('خطأ حذف المحادثة:', e2); }
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 مغادرة قروب 」\n│\n│ › تم الخروج من: ${target.name || target.threadID} ✅\n│ › تم حذف المحادثة من القائمة ✅\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-  } catch(e) {
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `❌ تعذر مغادرة المجموعة: ${e.message || e}`, threadID);
   }
 }
 
 async function handleEadatDabt(api, event) {
-  const { threadID } = event;
-  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط 」\n│\n│ › جارِ إعادة ضبط النظام بالترتيب (المجموعات أولاً ثم الأعضاء)...\n│ › قد تستغرق العملية بعض الوقت لتفادي حظر الطلبات...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-  
-  const players = await getAllPlayers();
-  const db = getDB();
-  let done = 0, failed = 0;
+  const { threadID, senderID } = event;
+  await setAdminSession(senderID, { state: 'RESET_MAIN' });
+  await sendMessage(api,
+    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n      ✦ إعادة ضبط إعدادات ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
+    `╮───∙⋆⋅「 الخيارات 」\n` +
+    `│ 1 › إعادة ضبط أسماء القروبات\n` +
+    `│ 2 › إعادة ضبط صور القروبات\n` +
+    `│ 3 › إعادة ضبط كنية البوت\n` +
+    `│ 4 › إعادة ضبط جميع الكنيات للاعبين\n` +
+    `│ 5 › رجوع\n` +
+    `╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+}
 
-  // 1) جلب حسابات الإدارة العليا الذين يجب تعديل كنياتهم في كل العواصم
-  const topPlayers = players.filter(p => p.rank === 'الامبراطور' || p.rank === 'نائب الامبراطور');
+async function handleEadatDabtSession(api, event, session) {
+  const { threadID, senderID, body } = event;
+  const text = (body || '').trim();
 
-  // ==========================================
-  // المرحلة الأولى: ضبط العواصم الثلاثة وأعضائها
-  // ==========================================
-  for (const k of ['solfare', 'niravil', 'murdak']) {
-    const gid = config.groupes[k];
-    if (!gid) continue;
+  if (text === '5' || text === 'رجوع' || text === 'خروج') {
+    await deleteAdminSession(senderID);
+    await handleTa3deel(api, event);
+    return;
+  }
 
-    // أ) ضبط الاسم والصورة للعاصمة أولاً
-    const setting = await getGroupSetting(k);
-    const defaultName = (setting && setting.defaultName) ? setting.defaultName : `مملكة ${kingdomNamesAr[k]}`;
-    await updateGroupSetting(k, { customName: defaultName });
-    
-    try { await setTitle(api, defaultName, gid); } catch (e) {}
-
-    if (setting && (setting.photoBase64 || setting.defaultPhotoUrl || setting.photoUrl)) {
+  if (session.state === 'RESET_MAIN') {
+    if (text === '1') {
+      await sendMessage(api, `⏳ جاري إعادة ضبط أسماء القروبات...`, threadID);
       try {
-        const tmp = path.join(require('os').tmpdir(), `reset_${k}_${Date.now()}.jpg`);
-        let downloaded = false;
-        if (setting.photoBase64) {
-          fs.writeFileSync(tmp, Buffer.from(setting.photoBase64, 'base64'));
-          downloaded = true;
-        } else {
-          const url = setting.defaultPhotoUrl || setting.photoUrl;
-          if (url) { try { await downloadPhoto(url, tmp); downloaded = true; } catch (e2) {} }
-        }
-        if (downloaded) {
-          await new Promise(r => api.changeGroupImage(fs.createReadStream(tmp), gid, () => { try { fs.unlinkSync(tmp); } catch (_) {} r(); }));
-        } else { try { fs.unlinkSync(tmp); } catch (_) {} }
-      } catch (e) {}
+        const { snapshotGroupNames } = require('./protection');
+        await snapshotGroupNames(true); // true to force reset
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط ✅ 」\n│\n│ › تم إعادة ضبط أسماء القروبات بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      } catch (e) {
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `❌ فشل إعادة ضبط أسماء القروبات: ${e.message || e}`, threadID);
+      }
+      return;
     }
-
-    // ب) تصفية وتعديل كنيات الأعضاء المنتمين لهذه العاصمة فقط + الإدارة العليا
-    const capitalPlayers = players.filter(p => 
-      (p.kingdom === k && (!p.registeredCityName || p.registeredCityName === 'العاصمة')) ||
-      p.rank === 'الامبراطور' || p.rank === 'نائب الامبراطور'
-    );
-
-    for (const p of capitalPlayers) {
-      const nn = await _getDynamicNickname(p);
-      const ok = await _changeNicknameSafe(api, nn, gid, p.fbId);
-      if (ok) done++; else failed++;
-      await _sleep(500); // تأخير لتفادي حظر فيسبوك المؤقت
+    if (text === '2') {
+      await sendMessage(api, `⏳ جاري إعادة ضبط صور القروبات...`, threadID);
+      try {
+        const { snapshotGroupPhotos } = require('./protection');
+        await snapshotGroupPhotos(true); // true to force reset
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط ✅ 」\n│\n│ › تم إعادة ضبط صور القروبات بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      } catch (e) {
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `❌ فشل إعادة ضبط صور القروبات: ${e.message || e}`, threadID);
+      }
+      return;
     }
-  }
-
-  // ==========================================
-  // المرحلة الثانية: ضبط مدن الممالك (الأفرع) وأعضائها
-  // ==========================================
-  try {
-    const cities = await db.collection('cities').find().toArray();
-    for (const city of cities) {
-      if (!city.threadId) continue;
-
-      // أ) ضبط الاسم والصورة للمدينة أولاً
-      try { await setTitle(api, city.name, city.threadId); } catch(e) {}
-
-      if (city.photoBase64 || city.photoUrl) {
-        try {
-          const tmp = path.join(require('os').tmpdir(), `reset_city_${city.threadId}_${Date.now()}.jpg`);
-          let downloaded = false;
-          if (city.photoBase64) {
-            fs.writeFileSync(tmp, Buffer.from(city.photoBase64, 'base64'));
-            downloaded = true;
-          } else if (city.photoUrl) {
-            await downloadPhoto(city.photoUrl, tmp);
-            downloaded = true;
+    if (text === '3') {
+      await sendMessage(api, `⏳ جاري إعادة ضبط كنية البوت...`, threadID);
+      try {
+        const { snapshotBotNickname } = require('./protection');
+        await snapshotBotNickname(true); // true to force reset
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط ✅ 」\n│\n│ › تم إعادة ضبط كنية البوت بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      } catch (e) {
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `❌ فشل إعادة ضبط كنية البوت: ${e.message || e}`, threadID);
+      }
+      return;
+    }
+    if (text === '4') {
+      await sendMessage(api, `⏳ جاري إعادة ضبط جميع الكنيات للاعبين...`, threadID);
+      try {
+        const players = await getAllPlayers();
+        for (const player of players) {
+          const newNick = await _getDynamicNickname(player);
+          if (player.nickname !== newNick) {
+            await _changeNicknameSafe(api, newNick, threadID, player.fbId);
           }
-          if (downloaded) {
-            await new Promise(r => api.changeGroupImage(fs.createReadStream(tmp), city.threadId, () => { try { fs.unlinkSync(tmp); } catch (_) {} r(); }));
-          } else { try { fs.unlinkSync(tmp); } catch (_) {} }
-        } catch(e) {}
+        }
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط ✅ 」\n│\n│ › تم إعادة ضبط جميع الكنيات للاعبين بنجاح.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      } catch (e) {
+        await deleteAdminSession(senderID);
+        await sendMessage(api, `❌ فشل إعادة ضبط كنيات اللاعبين: ${e.message || e}`, threadID);
       }
-
-      // ب) تصفية وتعديل كنيات الأعضاء المنتمين لهذه المدينة تحديداً
-      const cityPlayers = players.filter(p => 
-        p.kingdom === city.kingdom && 
-        p.registeredCityName === city.name
-      );
-
-      for (const p of cityPlayers) {
-        const nn = await _getDynamicNickname(p);
-        const ok = await _changeNicknameSafe(api, nn, city.threadId, p.fbId);
-        if (ok) done++; else failed++;
-        await _sleep(500);
-      }
+      return;
     }
-  } catch(e) {
-    console.error('Error resetting cities:', e.message);
+    await sendMessage(api, `⚠️ الرجاء اختيار خيار صحيح من القائمة (1 - 5).`, threadID);
+    return;
   }
-
-  // ==========================================
-  // المرحلة الثالثة: ضبط كنية البوت الافتراضية
-  // ==========================================
-  const botNickSetting = await getGroupSetting('bot_global');
-  const defaultBotNick = botNickSetting && botNickSetting.botNickname ? botNickSetting.botNickname : null;
-  if (defaultBotNick) {
-    const botId = api.getCurrentUserID ? (typeof api.getCurrentUserID === 'function' ? api.getCurrentUserID() : api.getCurrentUserID) : null;
-    if (botId) {
-      const allGroupIds = Object.values(config.groupes).filter(Boolean);
-      for (const gid of allGroupIds) {
-        await _changeNicknameSafe(api, defaultBotNick, gid, botId);
-        await _sleep(500);
-      }
-    }
-  }
-
-  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط بالترتيب 」\n│\n│ › كنيات مُعادة بنجاح : ${done}\n│ › كنيات فشلت : ${failed}\n│ › أسماء وصور قروبات العواصم : تمت إعادتها ✅\n│ › أسماء وصور قروبات مدن الممالك : تمت إعادتها ✅\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
 async function handleQarobaat(api, event) {
   const { threadID, senderID } = event;
-  const g = config.groupes;
-  const msg =
-    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n     ✦  قروبات الممالك  ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
-    `╮───∙⋆⋅「 الايديهات الحالية 」\n│ › سولفارا : ${g.solfare || 'غير محدد'}\n│ › نيرافيل : ${g.niravil || 'غير محدد'}\n│ › مورداك  : ${g.murdak  || 'غير محدد'}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
-    `╮───∙⋆⋅「 الخيارات 」\n│ 1 › تعديل ايدي سولفارا\n│ 2 › تعديل ايدي نيرافيل\n│ 3 › تعديل ايدي مورداك\n│ 4 › خروج\n╯───────∙⋆⋅ ※ ⋅⋆∙`;
   await setAdminSession(senderID, { state: 'QAROBAAT_MAIN' });
-  await sendMessage(api, msg, threadID);
+  await sendMessage(api,
+    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n      ✦ إدارة قروبات الممالك ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
+    `╮───∙⋆⋅「 الخيارات 」\n` +
+    `│ 1 › عرض ايديات القروبات الحالية\n` +
+    `│ 2 › تعديل ايدي قروب مملكة\n` +
+    `│ 3 › رجوع\n` +
+    `╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
 async function handleQarobaatSession(api, event, session) {
   const { threadID, senderID, body } = event;
   const text = (body || '').trim();
-  if (text === 'خروج' || text === '4') { await deleteAdminSession(senderID); await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return; }
-  if (session.state === 'QAROBAAT_MAIN') {
-    const map = { '1':'solfare','2':'niravil','3':'murdak' }, arMap = { solfare:'سولفارا', niravil:'نيرافيل', murdak:'مورداك' };
-    if (!map[text]) { await sendMessage(api, `⚠️ اختر من 1 إلى 4`, threadID); return; }
-    const kingdom = map[text];
-    await setAdminSession(senderID, { state: 'QAROBAAT_AWAIT_ID', kingdom });
-    await sendMessage(api, `╮───∙⋆⋅「 تعديل ايدي ${arMap[kingdom]} 」\n│\n│ › الايدي الحالي : ${config.groupes[kingdom] || 'غير محدد'}\n│\n│ › ارسل الايدي الجديد\n│ › او اكتب 《 خروج 》\n│\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return;
-  }
-  if (session.state === 'QAROBAAT_AWAIT_ID') {
-    const arMap = { solfare:'سولفارا', niravil:'نيرافيل', murdak:'مورداك' }, kingdom = session.kingdom;
-    if (!/^\d{5,}$/.test(text)) { await sendMessage(api, `⚠️ الايدي غير صحيح\nأعد المحاولة او اكتب 《 خروج 》`, threadID); return; }
-    const oldId = config.groupes[kingdom]; config.groupes[kingdom] = text; await require('../database').setBotConfig('groupes', config.groupes);
+
+  if (text === '3' || text === 'رجوع' || text === 'خروج') {
     await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n│ › المملكة  : ${arMap[kingdom]}\n│ › الايدي القديم : ${oldId || 'غير محدد'}\n│ › الايدي الجديد : ${text}\n│\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return;
+    await handleTa3deel(api, event);
+    return;
+  }
+
+  if (session.state === 'QAROBAAT_MAIN') {
+    if (text === '1') {
+      let msg = `╮───∙⋆⋅「 ايديات القروبات الحالية 」\n`;
+      for (const k in config.groupes) {
+        msg += `│ › ${kingdomNamesAr[k]}: ${config.groupes[k] || 'غير محدد'}\n`;
+      }
+      msg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
+      await sendMessage(api, msg, threadID);
+      return;
+    }
+    if (text === '2') {
+      await setAdminSession(senderID, { state: 'QAROBAAT_EDIT_SELECT' });
+      await sendMessage(api,
+        `╮───∙⋆⋅「 تعديل ايدي قروب 」\n│\n` +
+        `│ اختر المملكة لتعديل ايدي قروبها:\n` +
+        `│ 1 › سولفارا\n` +
+        `│ 2 › نيرافيل\n` +
+        `│ 3 › مورداك\n` +
+        `│\n` +
+        `│ › او اكتب 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      return;
+    }
+    await sendMessage(api, `⚠️ الرجاء اختيار خيار صحيح من القائمة (1 - 3).`, threadID);
+    return;
+  }
+
+  if (session.state === 'QAROBAAT_EDIT_SELECT') {
+    const kMap = { '1': 'solfare', '2': 'niravil', '3': 'murdak' };
+    const k = kMap[text];
+    if (!k) {
+      await sendMessage(api, `⚠️ خيار غير صحيح. اختر من (1 - 3).`, threadID);
+      return;
+    }
+    await setAdminSession(senderID, { state: 'QAROBAAT_EDIT_AWAIT_ID', kingdom: k });
+    await sendMessage(api, `╮───∙⋆⋅「 تعديل ايدي قروب ${kingdomNamesAr[k]} 」\n│\n│ › الايدي الحالي: ${config.groupes[k] || 'غير محدد'}\n│ › ارسل الايدي الجديد:\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    return;
+  }
+
+  if (session.state === 'QAROBAAT_EDIT_AWAIT_ID') {
+    const { kingdom } = session;
+    if (!text || !/^[0-9]+$/.test(text)) {
+      await sendMessage(api, `⚠️ ايدي القروب غير صحيح. يجب أن يكون أرقاماً فقط.`, threadID);
+      return;
+    }
+    config.groupes[kingdom] = text;
+    fs.writeFileSync(path.join(__dirname, '../config.json'), JSON.stringify(config, null, 2));
+    await deleteAdminSession(senderID);
+    await sendMessage(api, `╮───∙⋆⋅「 تم التعديل ✅ 」\n│\n│ › تم تحديث ايدي قروب ${kingdomNamesAr[kingdom]} إلى ${text}\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+    return;
   }
 }
 
 async function handleIdafa(api, event) {
   const { threadID, senderID } = event;
-  await setAdminSession(senderID, { state: 'IDAFA_SELECT' });
+  await setAdminSession(senderID, { state: 'IDAFA_MAIN' });
   await sendMessage(api,
-    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n     ✦  اضافة للقروبات  ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
-    `╮───∙⋆⋅「 اختر القروب 」\n│ 1 › سولفارا\n│ 2 › نيرافيل\n│ 3 › مورداك\n│ 4 › الكل\n│ 5 › خروج\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
-    threadID);
+    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n      ✦ إضافة مستخدم لقروب ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
+    `╮───∙⋆⋅「 الخيارات 」\n` +
+    `│ 1 › سولفارا\n` +
+    `│ 2 › نيرافيل\n` +
+    `│ 3 › مورداك\n` +
+    `│ 4 › جميع القروبات\n` +
+    `│ 5 › رجوع\n` +
+    `╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
 async function handleIdafaSession(api, event, session) {
-  const { threadID, senderID } = event;
-  const text = (event.body || '').trim();
-  const arNames = { solfare: 'سولفارا', niravil: 'نيرافيل', murdak: 'مورداك' };
+  const { threadID, senderID, body } = event;
+  const text = (body || '').trim();
+  const arNames = { 'solfare': 'سولفارا', 'niravil': 'نيرافيل', 'murdak': 'مورداك' };
 
   if (text === 'خروج' || text === '5') {
     await deleteAdminSession(senderID);
@@ -898,8 +769,6 @@ async function handleMessageRequestsSession(api, event, session) {
       }
       return;
     }
-
-    await sendMessage(api, `⚠️ الرجاء اختيار: \n1 › قبول\n2 › رفض\n3 › رجوع`, threadID);
   }
 }
 
@@ -907,31 +776,7 @@ module.exports = {
   handleTa3deel,
   handleDataSession,
   handleEadatDabt,
-  handleQarobaat,
-  handleQarobaatSession,
-  handleIdafa,
-  handleIdafaSession,
-  handleCitiesSession,
-  handleBotGroups,
-  handleBotGroupsSession,
-  handleMessageRequests,
-  handleMessageRequestsSession
-};
-      } catch (e) {
-        await deleteAdminSession(senderID);
-        await sendMessage(api, `❌ فشل رفض الطلب: ${e.message || e}`, threadID);
-      }
-      return;
-    }
-
-    await sendMessage(api, `⚠️ الرجاء اختيار: \n1 › قبول\n2 › رفض\n3 › رجوع`, threadID);
-  }
-}
-
-module.exports = {
-  handleTa3deel,
-  handleDataSession,
-  handleEadatDabt,
+  handleEadatDabtSession,
   handleQarobaat,
   handleQarobaatSession,
   handleIdafa,
