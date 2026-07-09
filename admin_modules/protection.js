@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config.json');
 const { generateNickname, getKingdomByThreadId, kingdomNamesAr, sendMessage } = require('../utils');
-const { getAllPlayers, getPlayer, getProtectedState, saveProtectedState, getProtectionSettings, saveProtectionSettings, getGroupSetting, setAdminSession, deleteAdminSession } = require('../database');
+const { getAllPlayers, getPlayer, getProtectedState, saveProtectedState, getProtectionSettings, getGroupSetting, setAdminSession, deleteAdminSession } = require('../database');
 const { setTitle, downloadPhoto } = require('./helpers');
 
 const _protectionLocks = new Set();
@@ -16,10 +16,9 @@ function _sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// دالة مساعدة لحساب الكنية ديناميكياً شاملة كافة الألقاب والرموز التعبيرية والحالات النشطة
-async function getDynamicNickname(player) {
-  const { getDB } = require('../database');
-  const db = getDB();
+// دالة مساعدة موحدة لحساب الكنية ديناميكياً شاملة كافة الألقاب والرموز التعبيرية والحالات النشطة
+async function getDynamicNickname(player, forceMute = false) {
+  const { generateNickname } = require('../utils');
   const baseRank = player.rank || 'متدرب';
   let nick = generateNickname(player.nickname, baseRank, player.class, player.warnings || 0);
 
@@ -30,19 +29,55 @@ async function getDynamicNickname(player) {
   }
 
   // 2. فحص حالة التجاهل والكتم 🔇
-  try {
-    const isIgnored = await db.collection('ignored_players').findOne({ fbId: String(player.fbId) });
-    if (isIgnored) {
-      if (!nick.includes('🔇')) {
-        nick += ' 🔇';
-      }
+  if (forceMute) {
+    if (!nick.includes('🔇')) {
+      nick += ' 🔇';
     }
-  } catch (e) {}
+  } else {
+    try {
+      const { getDB } = require('../database');
+      const db = getDB();
+      const isIgnored = await db.collection('ignored_players').findOne({ fbId: String(player.fbId) });
+      if (isIgnored) {
+        if (!nick.includes('🔇')) {
+          nick += ' 🔇';
+        }
+      }
+    } catch (e) {}
+  }
 
   return nick;
 }
 
-// تغيير كنية مع إعادة محاولة لتفادي الحظر المؤقت
+// تحديث كاش الأعضاء في المجموعات الرسمية (العواصم والمدن) ديناميكياً لتفادي استهلاك موارد الخادم
+async function updateSystemGroupMembersCache(api) {
+  global.systemGroupMembers = global.systemGroupMembers || {};
+  const { getDB } = require('../database');
+  const db = getDB();
+
+  const kingdomGroupIds = Object.values(config.groupes).filter(Boolean).map(String);
+  let cityGroupIds = [];
+  try {
+    const cities = await db.collection('cities').find().toArray();
+    cityGroupIds = cities.map(c => String(c.threadId)).filter(Boolean);
+  } catch (e) {}
+
+  const allGroupIds = [...new Set([...kingdomGroupIds, ...cityGroupIds])];
+  for (const gid of allGroupIds) {
+    try {
+      await new Promise((resolve) => {
+        api.getThreadInfo(gid, (err, res) => {
+          if (!err && res && res.participantIDs) {
+            global.systemGroupMembers[gid] = res.participantIDs.map(String);
+          }
+          resolve();
+        });
+      });
+    } catch (e) {}
+  }
+}
+
+// تغيير كنية مع إعادة محاولة لتفادي الحظر المؤقت من فيسبوك
 async function _changeNicknameSafe(api, nickname, threadID, userId, attempts = 3, delayMs = 1200) {
   for (let i = 1; i <= attempts; i++) {
     try {
@@ -104,7 +139,7 @@ async function snapshotGroupPhotos() {
   }
   try {
     const { getDB } = require('../database');
-    const cities = await getDB().collection('cities').find().toArray();
+    const cities = await db.collection('cities').find().toArray();
     for (const city of cities) {
       if (!city.threadId) continue;
       const base64 = city.photoBase64;
@@ -156,8 +191,6 @@ async function handleProtection(api, event, botId) {
 
   // ── حماية كنيات اللاعبين ──
   if (settings.nicknames && event.logMessageType === 'log:user-nickname') {
-    if (!state.nicknames) return;
-
     const changedId = String(
       (event.logMessageData && (event.logMessageData.participant_id || event.logMessageData.participantId || event.logMessageData.participantID)) || ''
     );
@@ -178,11 +211,32 @@ async function handleProtection(api, event, botId) {
     if (newNick === protectedNick) return;
     if (botId && eventAuthor && eventAuthor === String(botId)) return;
 
+    // قفل الحماية الشامل للمستخدم لحمايته عبر جميع مجموعات النظام ومنع التكرار الارتدادي للطلبات
     const lockKey = `nick_${changedId}`;
     if (_protectionLocks.has(lockKey)) return;
     _lock(lockKey, 8000);
 
-    await _changeNicknameSafe(api, protectedNick, event.threadID, changedId);
+    if (!global.systemGroupMembers) {
+      await updateSystemGroupMembersCache(api);
+    }
+
+    // البحث عن كافة قروبات النظام التي يتواجد بها هذا اللاعب فعلياً وتصحيح كنيته فيها فوراً
+    const targetGroupIds = [];
+    if (global.systemGroupMembers) {
+      for (const [gid, members] of Object.entries(global.systemGroupMembers)) {
+        if (members.includes(String(changedId))) {
+          targetGroupIds.push(gid);
+        }
+      }
+    }
+    if (!targetGroupIds.includes(event.threadID)) {
+      targetGroupIds.push(event.threadID);
+    }
+
+    for (const gid of targetGroupIds) {
+      await _changeNicknameSafe(api, protectedNick, gid, changedId);
+      await _sleep(500);
+    }
     return;
   }
 
@@ -310,5 +364,6 @@ module.exports = {
   snapshotGroupNames,
   snapshotGroupPhotos,
   snapshotBotNickname,
-  getDynamicNickname
+  getDynamicNickname,
+  updateSystemGroupMembersCache
 };
