@@ -41,8 +41,7 @@ const STEPS = {
   NICKNAME: 'nickname',
   CONFIRM: 'confirm',
   SYSTEM_GROUP: 'system_group',
-  INVITE: 'invite',
-  KINGDOM_CHOICE: 'kingdom_choice'
+  INVITE: 'invite'
 };
 
 async function handleTasjil(api, event) {
@@ -85,8 +84,6 @@ async function handleTasjil(api, event) {
     await handleSystemGroupStep(api, event, session, text);
   } else if (session.step === STEPS.INVITE) {
     await handleInviteStep(api, event, session, text);
-  } else if (session.step === STEPS.KINGDOM_CHOICE) {
-    await handleKingdomChoiceStep(api, event, session, text);
   }
 }
 
@@ -165,67 +162,10 @@ async function handleInviteStep(api, event, session, text) {
     return;
   }
 
-  if (inviterPlayer.kingdom !== session.kingdom) {
-    await setTempSession(senderID, {
-      ...session,
-      step: STEPS.KINGDOM_CHOICE,
-      inviterFbId: inviterPlayer.fbId,
-      inviterKingdom: inviterPlayer.kingdom
-    });
-    await sendReply(api, buildKingdomChoiceMsg(inviterPlayer.kingdom, session.kingdom), messageID, threadID);
-    return;
-  }
-
   await finalizeRegistration(api, event, session, inviterPlayer.fbId);
 }
 
-async function handleKingdomChoiceStep(api, event, session, text) {
-  const { threadID, senderID, messageID } = event;
-
-  if (text === 'مواصلة') {
-    await finalizeRegistration(api, event, session, session.inviterFbId);
-    return;
-  }
-
-  if (text === 'نقل') {
-    const targetKingdom = session.inviterKingdom;
-    const targetGroupId = config.groupes[targetKingdom];
-
-    await sendReply(api,
-      `⚠️ ━━━━━━━━━━━━━━━━ ⚠️\n┇سيتم نقلك لمملكة ${kingdomNamesAr[targetKingdom]} بعد 5 ثواني\n\n┇اذا لم تجد قروب المملكة الجديدة جرب البحث في طلبات المراسلة \n⚠️ ━━━━━━━━━━━━━━━━ ⚠️`,
-      messageID, threadID);
-
-    setTimeout(async () => {
-      try {
-        await removeFromGroup(api, senderID, threadID);
-        await addToGroup(api, senderID, targetGroupId);
-
-        const userInfo = await getUserInfo(api, senderID);
-        const userName = userInfo ? userInfo.name : String(senderID);
-
-        await sendMessage(api,
-          `⟬ ${userName} ⟭\n✦ تمت عملية النقل بنجاح`,
-          targetGroupId);
-
-        await finalizeRegistration(api, event, { ...session, kingdom: targetKingdom, threadID: targetGroupId }, session.inviterFbId, true);
-
-      } catch (err) {
-        console.error('خطأ في النقل:', err);
-        await sendMessage(api,
-          `حصل خطأ يرجى التواصل مع الادمن`,
-          threadID);
-      }
-    }, 5000);
-
-    return;
-  }
-
-  await sendReply(api,
-    `❖ ارسل 《 مواصلة 》للبقاء في مملكتك او 《 نقل 》للانتقال`,
-    messageID, threadID);
-}
-
-async function finalizeRegistration(api, event, session, inviterFbId, transferred = false) {
+async function finalizeRegistration(api, event, session, inviterFbId) {
   const { threadID, senderID, messageID } = event;
   const targetThreadID = session.threadID || threadID;
 
@@ -269,20 +209,16 @@ async function finalizeRegistration(api, event, session, inviterFbId, transferre
   }
 
   const successMsg = buildSuccessMsg(session.pendingNickname, session.kingdom, playerClass, registeredCityName);
-  if (transferred) {
-    await sendMessage(api, successMsg, targetThreadID);
-  } else {
-    await sendReply(api, successMsg, messageID, targetThreadID);
-  }
+  await sendReply(api, successMsg, messageID, targetThreadID);
 
   if (inviterFbId) {
     const inviter = await getPlayer(inviterFbId);
     if (inviter) {
-      await updatePlayer(inviterFbId, { coins: (inviter.coins || 0) + 50 });
+      await updatePlayer(inviterFbId, { coins: (inviter.coins || 0) + 200 });
       await addXP(inviterFbId, 30, api, targetThreadID).catch(() => {});
 
       await addNotification(inviterFbId,
-        `⦿ انضم اللاعب 〘 ${session.pendingNickname} 〙بفضلك الى عالم نيكسوس \nحصلت على مكافئة ⛁ ◀ 50 كوينز`
+        `⦿ انضم اللاعب 〘 ${session.pendingNickname} 〙بفضلك الى عالم نيكسوس \nحصلت على مكافئة ⛁ ◀ 200 كوينز`
       );
 
       try {
@@ -377,15 +313,6 @@ function buildInviteError() {
      𓆫─━━࿇━━━──━━━࿇━━─𓆫`;
 }
 
-function buildKingdomChoiceMsg(inviterKingdom, currentKingdom) {
-  return `𓆫─━━࿇━━━──━━━࿇━━─𓆫 
-✦ اللاعب الذي دعاك كان من مملكة ${kingdomNamesAr[inviterKingdom]} 
-✦ اتود الاستمرار في هذه المملكة او الانتقال الى مملكة ${kingdomNamesAr[inviterKingdom]}
-❖ للمواصلة هنا ارسل 《مواصلة 》
-❖ للانتقال الى ${kingdomNamesAr[inviterKingdom]} ارسل 《نقل 》
-𓆫─━━࿇━━━──━━━࿇━━─𓆫`;
-}
-
 function buildSuccessMsg(nickname, kingdom, playerClass, cityName) {
   const symbol = classSymbols[playerClass];
   const cityLine = cityName
@@ -405,29 +332,11 @@ ${cityLine}
 𒂭━══════════════━𒂭`;
 }
 
-function removeFromGroup(api, userId, threadID) {
-  return new Promise((resolve, reject) => {
-    api.removeUserFromGroup(userId, threadID, (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
-  });
-}
-
 function addToGroup(api, userId, threadID) {
   return new Promise((resolve, reject) => {
     api.addUserToGroup(userId, threadID, (err) => {
       if (err) return reject(err);
       resolve();
-    });
-  });
-}
-
-function getUserInfo(api, userId) {
-  return new Promise((resolve) => {
-    api.getUserInfo(userId, (err, info) => {
-      if (err || !info) return resolve(null);
-      resolve(info[userId] || null);
     });
   });
 }
