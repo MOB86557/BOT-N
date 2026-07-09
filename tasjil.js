@@ -59,7 +59,7 @@ async function handleTasjil(api, event) {
   const existing = await getPlayer(senderID);
   if (existing) {
     await sendReply(api,
-      `𓆫─━━࿇━━━──━━━࿇━━─𓆫\n              『 تنبيه ⚠ 』\n\nأنت مسجل مسبقاً في نظام نيكسوس باللقب 『${existing.nickname}』\n\n     𓆫─━━࿇━━━──━━━࿇━━─𓆫`,
+      `𓆫─━━࿇━━━──━━━࿇━━─𓆫\n              『 تنبيه ⚠ 』\n\nأنت مسجل مسبقاً في نظام نيكسوس ⦿ 『${existing.nickname}』\n\n     𓆫─━━࿇━━━──━━━࿇━━─𓆫`,
       messageID, threadID);
     return;
   }
@@ -302,7 +302,7 @@ function buildInviteMsg() {
 }
 
 function buildInviteError() {
-  return `𓆫─━━࿇━━━──━━━࿇━━─𓆫
+  return `??─━━࿇━━━──━━━࿇━━─𓆫
               『 خطأ ⚠ 』
 
 ✦ لم يتم العثور على هذا اللاعب في نضام نيكسوس رجائا ارسل لقبا او رابطا صحيحا 
@@ -478,4 +478,4 @@ async function handleDMJoin(api, event) {
   return true;
 }
 
-module.exports = { handleTasjil, handleExternalJoin, handleExternalJoinReply, handleDMJoin };
+module.exports = { handleTasjil, handleExternalJoin, handleExternalJoinReply, handleDMJoin };leDMJoin };
