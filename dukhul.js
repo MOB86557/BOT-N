@@ -86,6 +86,62 @@ async function changePlayerNickname(api, threadID, playerFbId, nickname, rank, p
   });
 }
 
+// ─── تحديد قائمة قروبات (Thread IDs) التي يجب تحديث كنية اللاعب فيها حسب رتبته ───
+// الامبراطور / نائب الامبراطور  → كل عواصم الممالك الثلاث + كل مدن الممالك الثلاث
+// الحاكم / نائب الحاكم / جنرال  → عاصمة مملكته + كل مدن مملكته فقط
+// باقي الرتب                    → مدينته المسجل فيها فقط (أو عاصمة مملكته إن كان مسجلاً بالعاصمة)
+async function getBroadcastThreadIds(rank, kingdom, registeredCityName) {
+  const db = require('./database').getDB();
+  const EMPIRE_WIDE_RANKS = ['الامبراطور', 'نائب الامبراطور'];
+  const KINGDOM_WIDE_RANKS = ['الحاكم', 'نائب الحاكم', 'جنرال'];
+
+  try {
+    if (EMPIRE_WIDE_RANKS.includes(rank)) {
+      const capitals = Object.values(config.groupes || {}).map(String);
+      const cities = await db.collection('cities').find({}).toArray();
+      const cityIds = cities.map(c => String(c.threadId));
+      return [...new Set([...capitals, ...cityIds])];
+    }
+
+    if (KINGDOM_WIDE_RANKS.includes(rank)) {
+      const ids = [];
+      if (kingdom && config.groupes && config.groupes[kingdom]) ids.push(String(config.groupes[kingdom]));
+      if (kingdom) {
+        const cities = await db.collection('cities').find({ kingdom }).toArray();
+        ids.push(...cities.map(c => String(c.threadId)));
+      }
+      return [...new Set(ids)];
+    }
+
+    // باقي الرتب: مدينته فقط بمملكته (أو عاصمة مملكته إن لم يكن له مدينة محددة)
+    if (!registeredCityName || registeredCityName === 'العاصمة') {
+      return (kingdom && config.groupes && config.groupes[kingdom]) ? [String(config.groupes[kingdom])] : [];
+    }
+    const cityDoc = await db.collection('cities').findOne({ kingdom, name: registeredCityName });
+    if (cityDoc) return [String(cityDoc.threadId)];
+    return (kingdom && config.groupes && config.groupes[kingdom]) ? [String(config.groupes[kingdom])] : [];
+  } catch (e) {
+    console.error('[Broadcast Nickname] Error resolving thread ids:', e.message);
+    return [];
+  }
+}
+
+// ─── نشر تغيير كنية اللاعب على كل القروبات المطابقة لرتبته (حسب النطاق أعلاه) ───
+async function broadcastPlayerNickname(api, player, statusEmoji) {
+  if (!player || !player.fbId) return [];
+  const rank = player.rank || 'مجند';
+  const threadIds = await getBroadcastThreadIds(rank, player.kingdom, player.registeredCityName);
+
+  for (const threadId of threadIds) {
+    try {
+      await changePlayerNickname(api, threadId, player.fbId, player.nickname, rank, player.class, player.warnings, statusEmoji);
+    } catch (e) {
+      console.error(`[Broadcast Nickname] Failed for thread ${threadId}:`, e.message);
+    }
+  }
+  return threadIds;
+}
+
 // ─── نظام الترحيب المجمّع والمفلتر للأعضاء الجدد ───
 async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
   const { threadID, participantIDs } = event;
@@ -260,5 +316,7 @@ module.exports = {
   handleBotJoin,
   changeBotNickname,
   changePlayerNickname,
-  handlePlayerJoinSubscribe
+  handlePlayerJoinSubscribe,
+  broadcastPlayerNickname,
+  getBroadcastThreadIds
 };
