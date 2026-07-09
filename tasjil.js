@@ -478,4 +478,4 @@ async function handleDMJoin(api, event) {
   return true;
 }
 
-module.exports = { handleTasjil, handleExternalJoin, handleExternalJoinReply, handleDMJoin };leDMJoin };
+module.exports = { handleTasjil, handleExternalJoin, handleExternalJoinReply, handleDMJoin };
