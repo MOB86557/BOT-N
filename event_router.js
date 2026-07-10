@@ -33,6 +33,9 @@ const {
   addXP, updatePlayer, getAdminSession
 } = require('./database');
 
+// استدعاء موديول الأكواد الترويجية الجديد
+const promoCodes = require('./admin_modules/promo_codes');
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -173,6 +176,9 @@ async function routeEvent(api, event, BOT_ID) {
   }
 
   if (!text) return;
+
+  // ─── 3. الفحص الذكي والاعتراض التلقائي للأكواد الترويجية بمجرد إرسالها من اللاعبين ───
+  if (await promoCodes.handlePlayerCommand(api, event)) return;
 
   if (await handleQuickCommands(api, event, text)) return;
 
