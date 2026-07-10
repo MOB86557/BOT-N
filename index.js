@@ -11,15 +11,31 @@ process.stderr.isTTY = false;
 const originalOn = process.on;
 const originalAddListener = process.addListener;
 
+// أداة صغيرة لاستخراج أول سطر من الـ stack يشير لملف داخل المشروع
+// (لمعرفة الملف والسطر المسبب للخطأ بسرعة من بين كل الأسطر)
+function extractSourceLocation(stack) {
+  if (!stack || typeof stack !== 'string') return null;
+  const lines = stack.split('\n').slice(1);
+  const line = lines.find(l => l.includes(__dirname) && !l.includes('node_modules')) || lines[0];
+  return line ? line.trim() : null;
+}
+
 // 1. تسجيل مستمع الأخطاء بالتفصيل مباشرة باستخدام الدالة الأصلية لتجنب حظره
+// ملاحظة هامة: لا يتم إيقاف السيرفر (process.exit) بعد الآن — فقط طباعة
+// الخطأ وسببه وموقعه بالتفصيل في الكونسول، والاستمرار في التشغيل.
 originalOn.call(process, 'uncaughtException', (err) => {
   console.error('\n================================================================');
-  console.error('🚨 [ خطأ فادح غير معالج في السيرفر - CRITICAL SYSTEM CRASH ] 🚨');
+  console.error('🚨 [ خطأ غير معالج تم اعتراضه - السيرفر مستمر بالعمل ] 🚨');
   console.error('================================================================');
-  console.error(`📌 نوع الخطأ (Name):    ${err.name || 'SyntaxError/RuntimeError'}`);
-  console.error(`📌 رسالة الخطأ (Message): ${err.message}`);
-  
-  if (err.stack) {
+  console.error(`📌 نوع الخطأ (Name):    ${err && err.name || 'SyntaxError/RuntimeError'}`);
+  console.error(`📌 رسالة الخطأ (Message): ${err && err.message}`);
+
+  const loc = extractSourceLocation(err && err.stack);
+  if (loc) {
+    console.error(`📍 موقع الخطأ (مكان الحدوث): ${loc}`);
+  }
+
+  if (err && err.stack) {
     console.error('\n📂 تتبع مسار وتحديد الملف البرمجي والسطر (Stack Trace):');
     console.error('----------------------------------------------------------------');
     console.error(err.stack);
@@ -27,18 +43,26 @@ originalOn.call(process, 'uncaughtException', (err) => {
   } else {
     console.error('\n⚠️ لا يتوفر تتبع للمسار للأسف.');
   }
-  
+
+  console.error('✅ تم تجاوز الخطأ — البوت يستمر بالعمل ولم يتوقف السيرفر.');
   console.error('================================================================\n');
-  process.exit(1);
+  // لا يوجد process.exit هنا عمداً — نستمر بالعمل بدلاً من إيقاف كل شيء
 });
 
 originalOn.call(process, 'unhandledRejection', (reason, promise) => {
   console.error('\n================================================================');
-  console.error('🚨 [ رفض غير معالج للوعود البرمجية - UNHANDLED REJECTION ] 🚨');
+  console.error('🚨 [ رفض غير معالج للوعود البرمجية - السيرفر مستمر بالعمل ] 🚨');
   console.error('================================================================');
   console.error('📌 السبب (Reason):', reason instanceof Error ? reason.stack : reason);
+
+  if (reason instanceof Error) {
+    const loc = extractSourceLocation(reason.stack);
+    if (loc) console.error(`📍 موقع الخطأ (مكان الحدوث): ${loc}`);
+  }
+
+  console.error('✅ تم تجاوز الخطأ — البوت يستمر بالعمل ولم يتوقف السيرفر.');
   console.error('================================================================\n');
-  process.exit(1);
+  // لا يوجد process.exit هنا عمداً — نستمر بالعمل بدلاً من إيقاف كل شيء
 });
 
 // 2. حظر أي موديول خارجي من تعديل أو اعتراض أحداث الـ uncaughtException
