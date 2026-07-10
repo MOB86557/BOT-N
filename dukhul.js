@@ -97,6 +97,23 @@ async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
   );
   if (realNewPlayers.length === 0) return;
 
+  // ─── طرد فوري للمستخدمين المحظورين دائمياً بمجرد انضمامهم ───
+  const { getPermanentBan } = require('./database');
+  const { kickFromAllGroups } = require('./admin_modules/helpers');
+  const activeNewPlayers = [];
+
+  for (const pid of realNewPlayers) {
+    const isBanned = await getPermanentBan(pid).catch(() => null);
+    if (isBanned) {
+      console.log(`[JoinSubscribe] طرد فوري وسريع للاعب محظور دائمياً: ${pid}`);
+      await kickFromAllGroups(api, pid).catch(() => {});
+      continue; // تخطي معالجة الترحيب والإضافة تماماً
+    }
+    activeNewPlayers.push(pid);
+  }
+
+  if (activeNewPlayers.length === 0) return;
+
   const kingdom = await getKingdomByThreadIdFull(threadID);
   if (!kingdom) return;
 
@@ -109,8 +126,8 @@ async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
 
   const buffer = joinBuffers.get(threadID);
 
-  // إضافة المنضمين الجدد مع تجنب التكرار
-  for (const pid of realNewPlayers) {
+  // إضافة المنضمين النشطين غير المحظورين مع تجنب التكرار
+  for (const pid of activeNewPlayers) {
     if (!buffer.userIds.includes(String(pid))) {
       buffer.userIds.push(String(pid));
     }
@@ -134,6 +151,13 @@ async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
       const returningPlayers = [];
       const newPids = [];
       for (const pid of pidsToWelcome) {
+        // فحص إضافي للتأكد من عدم حظرهم خلال مدة الـ 4 ثوانٍ
+        const stillBanned = await getPermanentBan(pid).catch(() => null);
+        if (stillBanned) {
+          await kickFromAllGroups(api, pid).catch(() => {});
+          continue;
+        }
+
         const existingPlayer = await getPlayer(pid);
         if (existingPlayer) {
           returningPlayers.push(existingPlayer);
@@ -166,7 +190,7 @@ async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
         });
       });
 
-      // جلب اسم الشخص المسؤول عن الإضافة ديناميكياً [1]
+      // جلب اسم الشخص المسؤول عن الإضافة ديناميكياً
       const adderId = event.author;
       let adderName = "انضمام ذاتي";
       if (adderId && String(adderId) !== String(botId) && String(adderId) !== String(BOT_ID)) {
@@ -216,7 +240,7 @@ async function handlePlayerJoinSubscribe(api, event, BOT_ID) {
           `✧ 𓆩 تــــــــــــــرحــــــــــــــيــــــــــــــب 𓆪 ✧\n\n` +
           `؜╮∙⋆⋅「 ${name} 」\n` +
           `│ › تاريخ الانضمام  ◄ ${formattedDate}\n` +
-          `│ › اضافه  ◄ ${adderName}\n` + // تم تحويل "Kanato" إلى الاسم الحقيقي ديناميكياً [1]
+          `│ › اضافه  ◄ ${adderName}\n` +
           `╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
           `اهلا بك ايها المجند دخولك عالم نيكسوس ليس صدفة اكتب " تسجيل " ، ابدء مغامرتك وانقش اسمك على اعالي الامبراطورية \n` +
           `───────∙⋆⋅ ※ ⋅⋆∙───────\n` +
