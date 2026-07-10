@@ -66,6 +66,13 @@ async function handleAdminCommand(api, event) {
       return true;
     }
 
+    // توجيه جلسة إنشاء الكود الترويجي
+    if (s.startsWith('AWAITING_CODE_')) {
+      const promoCodes = require('./admin_modules/promo_codes');
+      await promoCodes.handleCreateCodeSession(api, event, adminSession);
+      return true;
+    }
+
     // توجيه جلسات مفاتيح الرسم للادمن
     if (s.startsWith('DRAW_KEYS_')) {
       await drawKeys.handleDrawKeysSession(api, event, adminSession);
@@ -179,6 +186,13 @@ async function handleAdminCommand(api, event) {
   }
 
   // معالجة الأوامر المباشرة
+
+  // --- أمر إنشاء الكود الترويجي ---
+  if (text === 'انشاء كود' || text === 'إنشاء كود') {
+    const promoCodes = require('./admin_modules/promo_codes');
+    await promoCodes.handleCreateCodeStart(api, event);
+    return true;
+  }
 
   // --- أوامر الصمت الكامل ---
   if (text === 'صمت هنا') {
