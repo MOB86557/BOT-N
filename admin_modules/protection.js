@@ -30,12 +30,15 @@ async function snapshotGroupNames() {
     snap[k] = (setting && setting.customName) ? setting.customName : `مملكة ${kingdomNamesAr[k]}`;
   }
   // حفظ أسماء المدن (الأفرع) بمفتاح threadId
+  // ✅ تم التعديل: نحفظ groupName (اسم القروب الفعلي على فيسبوك) وليس name (اسم المدينة بالخريطة)
+  // لأن الحقلين منفصلان تماماً حسب تصميم النظام في groups.js
   try {
     const { getDB } = require('../database');
     const cities = await getDB().collection('cities').find().toArray();
     for (const city of cities) {
-      if (city.threadId && city.name) {
-        snap[`city_${city.threadId}`] = city.name;
+      const protectedGroupName = city.groupName || city.name; // احتياط لو لم يكن groupName محفوظاً
+      if (city.threadId && protectedGroupName) {
+        snap[`city_${city.threadId}`] = protectedGroupName;
       }
     }
   } catch (e) { console.error('[حماية] خطأ تحميل أسماء المدن:', e.message); }
