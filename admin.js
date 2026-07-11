@@ -103,6 +103,10 @@ async function handleAdminCommand(api, event) {
       await groups.handleBotGroupsSession(api, event, adminSession);
       return true;
     }
+    if (s === 'EADATDABT_MAIN' || s === 'EADATDABT_DELAY') {
+      await groups.handleEadatDabtSession(api, event, adminSession);
+      return true;
+    }
     if (s === 'MSG_REQS_MAIN' || s === 'MSG_REQS_ACTION') {
       await groups.handleMessageRequestsSession(api, event, adminSession);
       return true;
