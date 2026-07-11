@@ -10,7 +10,7 @@ const {
   addNotification,
   addXP // 🆙 تم استيراد دالة إضافة الـ XP هنا
 } = require('./database');
-const { sendReply, getKingdomByThreadId } = require('./utils');
+const { sendReply, getKingdomByThreadIdFull } = require('./utils');
 
 const COOLDOWN_MS = 20 * 60 * 1000;
 
@@ -77,7 +77,9 @@ function getBagCapacity(player) {
 
 async function handleActivity(api, event, { activityKey, resourceTable, actionName, actionEmoji, failEmoji, repeatVerb, requiredKingdom }) {
   const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+  // ✅ تم التعديل: استخدام النسخة الكاملة (Full) التي تشمل المدن أيضاً وليس العواصم فقط
+  // هذا يصلح عدم عمل أوامر حفر/جمع/صيد داخل قروبات المدن التابعة للممالك
+  const kingdom = await getKingdomByThreadIdFull(threadID);
   if (kingdom !== requiredKingdom) return;
 
   // ===== قفل مؤقت لمنع تنفيذ نفس النشاط مرتين إذا وصل الأمر بنفس اللحظة =====
@@ -191,7 +193,8 @@ async function handleSayd(api, event) {
 
 async function handleHaqiba(api, event) {
   const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+  // ✅ تم التعديل: دعم المدن أيضاً وليس العواصم فقط
+  const kingdom = await getKingdomByThreadIdFull(threadID);
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
@@ -227,7 +230,8 @@ async function handleHaqiba(api, event) {
 async function handleHadhf(api, event) {
   const { threadID, senderID, messageID, body } = event;
   const text = (body || '').trim();
-  const kingdom = getKingdomByThreadId(threadID);
+  // ✅ تم التعديل: دعم المدن أيضاً وليس العواصم فقط
+  const kingdom = await getKingdomByThreadIdFull(threadID);
   if (!kingdom) return;
 
   const match = text.match(/^حذف\s+(.+)$/);
@@ -262,7 +266,8 @@ async function handleHadhf(api, event) {
 async function handleIrsal(api, event) {
   const { threadID, senderID, messageID, body } = event;
   const text = (body || '').trim();
-  const kingdom = getKingdomByThreadId(threadID);
+  // ✅ تم التعديل: دعم المدن أيضاً وليس العواصم فقط
+  const kingdom = await getKingdomByThreadIdFull(threadID);
   if (!kingdom) return;
 
   const match = text.match(/^ارسال\s+(.+)\s+الى\s+(.+)$/);
