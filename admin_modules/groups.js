@@ -281,6 +281,12 @@ async function handleCitiesSession(api, event, session) {
     });
     // تطبيق اسم القروب على المجموعة فعلياً
     try { await setTitle(api, session.groupName, text); } catch(e) {}
+    // ✅ تم التعديل: تحديث "صورة" حماية الأسماء فوراً لتشمل المدينة الجديدة
+    // بدون هذا الاستدعاء، حماية الاسم لا تعرف بوجود هذه المدينة إطلاقاً
+    try {
+      const { snapshotGroupNames } = require('./protection');
+      await snapshotGroupNames();
+    } catch (e) { console.error('خطأ تحديث snapshot الأسماء بعد إضافة مدينة:', e.message); }
     await deleteAdminSession(senderID);
     await sendMessage(api,
       `╮───∙⋆⋅「 تم إنشاء فرع المدينة 🎉 」\n│\n` +
@@ -374,6 +380,11 @@ async function handleCitiesSession(api, event, session) {
     }
     await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { groupName: text } });
     try { await setTitle(api, text, session.targetCityId); } catch(e) {}
+    // ✅ تم التعديل: تحديث snapshot الأسماء فوراً بعد تعديل اسم قروب مدينة موجودة
+    try {
+      const { snapshotGroupNames } = require('./protection');
+      await snapshotGroupNames();
+    } catch (e) { console.error('خطأ تحديث snapshot الأسماء بعد تعديل مدينة:', e.message); }
     await deleteAdminSession(senderID);
     await sendMessage(api,
       `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n` +
@@ -409,6 +420,11 @@ async function handleCitiesSession(api, event, session) {
     } catch(e) { console.error('Error handling city photo download:', e); }
     
     await db.collection('cities').updateOne({ threadId: session.targetCityId }, { $set: { photoUrl, photoBase64 } });
+    // ✅ تم التعديل: تحديث snapshot الصور فوراً بعد تعديل صورة قروب مدينة موجودة
+    try {
+      const { snapshotGroupPhotos } = require('./protection');
+      await snapshotGroupPhotos();
+    } catch (e) { console.error('خطأ تحديث snapshot الصور بعد تعديل مدينة:', e.message); }
     
     if (photoBase64) {
       try {
