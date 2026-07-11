@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../config.json');
-const { generateNickname, getKingdomByThreadId, kingdomNamesAr, sendMessage } = require('../utils');
+const { generateNickname, getKingdomByThreadId, getKingdomByThreadIdFull, kingdomNamesAr, sendMessage, buildOfficialNickname } = require('../utils');
 const { getAllPlayers, getPlayer, getProtectedState, saveProtectedState, getProtectionSettings, saveProtectionSettings, getGroupSetting, setAdminSession, deleteAdminSession } = require('../database');
 const { setTitle, downloadPhoto } = require('./helpers');
 
@@ -108,25 +108,23 @@ async function handleProtection(api, event, botId) {
     }
   }
 
-  // ── حماية كنيات اللاعبين ──
+  // ── حماية كنيات اللاعبين (تشمل المسجلين وغير المسجلين) ──
+  // تُحسب الكنية "الرسمية" حياً من حالة اللاعب الفعلية الآن (وليس من صورة مأخوذة سابقاً)
+  // فتبقى صحيحة دوماً حتى لو تغيرت رتبته أو إنذاراته أو حالته بعد تفعيل الحماية
   if (settings.nicknames && event.logMessageType === 'log:user-nickname') {
-    if (!state.nicknames) return;
-
     const changedId = String(
       (event.logMessageData && (event.logMessageData.participant_id || event.logMessageData.participantId || event.logMessageData.participantID)) || ''
     );
     if (!changedId) return;
 
-    let protectedNick = null;
-    const player = await getPlayer(changedId);
-    if (player) {
-      protectedNick = generateNickname(player.nickname, player.rank || 'مجند', player.class, player.warnings || 0);
-    } else if (state.nicknames && state.nicknames[changedId]) {
-      protectedNick = state.nicknames[changedId];
-    }
+    // كنية البوت تُعالج بالكتلة أعلاه، وليست ضمن هذا المسار
+    if (botId && changedId === String(botId)) return;
 
-    if (!protectedNick) return;
+    // الحماية تسري فقط داخل قروبات الممالك (العواصم) والمدن الرسمية
+    const kingdom = await getKingdomByThreadIdFull(event.threadID);
+    if (!kingdom) return;
 
+    const protectedNick = await buildOfficialNickname(changedId);
     const newNick = String((event.logMessageData && (event.logMessageData.nickname || event.logMessageData.newNickname)) || '');
 
     if (newNick === protectedNick) return;
@@ -242,12 +240,14 @@ async function handleHimayaSession(api, event, session) {
     groupPhotos: current.groupPhotos || false,
   };
 
-  if      (text === '1') { newSettings.nicknames   = !current.nicknames;   if (newSettings.nicknames)   await snapshotNicknames();  }
+  // ملاحظة: حماية الكنيات لم تعد بحاجة لأخذ "صورة" مسبقة (snapshot) لأن الكنية الرسمية
+  // تُحسب حياً من حالة اللاعب الفعلية بقاعدة البيانات عند كل تغيير يُرصد (انظر handleProtection)
+  if      (text === '1') { newSettings.nicknames   = !current.nicknames; }
   else if (text === '2') { newSettings.groupNames  = !current.groupNames;  if (newSettings.groupNames)  await snapshotGroupNames(); }
   else if (text === '3') { newSettings.groupPhotos = !current.groupPhotos; if (newSettings.groupPhotos) await snapshotGroupPhotos(); }
   else if (text === '4') {
     newSettings = { nicknames: true, groupNames: true, groupPhotos: true };
-    await snapshotNicknames(); await snapshotGroupNames(); await snapshotGroupPhotos();
+    await snapshotGroupNames(); await snapshotGroupPhotos();
   }
   else if (text === '5') { newSettings = { nicknames: false, groupNames: false, groupPhotos: false }; }
   else { await sendMessage(api, `⚠️ اختر من 1 إلى 5`, threadID); return; }
