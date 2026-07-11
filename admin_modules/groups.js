@@ -751,7 +751,9 @@ async function handleEadatDabtNames(api, event) {
   try {
     const cities = await getDB().collection('cities').find().toArray();
     for (const city of cities) {
-      if (city.threadId) { try { await setTitle(api, city.name, city.threadId); } catch (e) {} }
+      // ✅ تم التعديل: استخدام groupName (اسم القروب الفعلي) بدل name (اسم المدينة بالخريطة)
+      const groupNameToApply = city.groupName || city.name;
+      if (city.threadId) { try { await setTitle(api, groupNameToApply, city.threadId); } catch (e) {} }
     }
   } catch (e) {
     console.error('Error resetting cities names:', e.message);
