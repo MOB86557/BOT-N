@@ -5,11 +5,12 @@
  */
 
 const { getPlayer } = require('./database');
-const { sendReply, drawBar, classSymbols, kingdomNamesAr, getKingdomByThreadId } = require('./utils');
+const { sendReply, drawBar, classSymbols, kingdomNamesAr, getKingdomByThreadIdFull } = require('./utils');
 
 async function handleMalafi(api, event) {
   const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+  // ✅ تم التعديل: استخدام النسخة الكاملة (Full) التي تشمل المدن أيضاً وليس العواصم فقط
+  const kingdom = await getKingdomByThreadIdFull(threadID);
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
