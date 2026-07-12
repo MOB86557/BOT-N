@@ -848,7 +848,7 @@ async function handleUse(api, event, itemName) {
   // ===== مشروب الطاقة =====
   if (itemName === 'مشروب الطاقة') {
     const currentEP = player.ep ?? 1000;
-    const newEP = Math.min(1000, currentEP + 50);
+    const newEP = Math.min(1000, currentEP + 200);
     const newBag = [...bag];
     newBag.splice(itemIndex, 1);
     await updatePlayer(String(senderID), { bag: newBag, ep: newEP });
@@ -861,7 +861,7 @@ async function handleUse(api, event, itemName) {
   // ===== مشروب محفز =====
   if (itemName === 'مشروب محفز') {
     const currentEP = player.ep ?? 1000;
-    const newEP = Math.min(1000, currentEP + 150);
+    const newEP = Math.min(1000, currentEP + 400);
     const newBag = [...bag];
     newBag.splice(itemIndex, 1);
     await updatePlayer(String(senderID), { bag: newBag, ep: newEP });
@@ -874,7 +874,7 @@ async function handleUse(api, event, itemName) {
   // ===== خلطة الشفاء =====
   if (itemName === 'خلطة الشفاء') {
     const currentHP = player.hp ?? 1000;
-    const newHP = Math.min(1000, currentHP + 50);
+    const newHP = Math.min(1000, currentHP + 200);
     const newBag = [...bag];
     newBag.splice(itemIndex, 1);
     await updatePlayer(String(senderID), { bag: newBag, hp: newHP });
@@ -887,7 +887,7 @@ async function handleUse(api, event, itemName) {
   // ===== مشروب الحياة =====
   if (itemName === 'مشروب الحياة') {
     const currentHP = player.hp ?? 1000;
-    const newHP = Math.min(1000, currentHP + 100);
+    const newHP = Math.min(1000, currentHP + 400);
     const newBag = [...bag];
     newBag.splice(itemIndex, 1);
     await updatePlayer(String(senderID), { bag: newBag, hp: newHP });
@@ -900,7 +900,7 @@ async function handleUse(api, event, itemName) {
   // ===== خلطة الأعماق =====
   if (itemName === 'خلطة الأعماق') {
     const currentHP = player.hp ?? 1000;
-    const newHP = Math.min(1000, currentHP + 200);
+    const newHP = Math.min(1000, currentHP + 650);
     const newBag = [...bag];
     newBag.splice(itemIndex, 1);
     await updatePlayer(String(senderID), { bag: newBag, hp: newHP });
