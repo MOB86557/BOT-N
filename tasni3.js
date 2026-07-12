@@ -224,13 +224,12 @@ const QUICK_BUY_FEE = 30; // رسوم ثابتة تُضاف على تكلفة ا
 const QUICK_BUY_EXPIRY_MS = 5 * 60 * 1000; // مدة صلاحية عرض الشراء السريع (تطابق كاش أسعار المبادل)
 
 // جلسات الشراء السريع بالذاكرة، مفتاحها senderID
-// القيمة: { threadID, itemName, purchases, totalCost, replyMessageId, expiresAt }
 const pendingQuickBuy = new Map();
 
-// أغراض معفاة من تكلفة الـ EP عند التصنيع (لا تُخصم منها طاقة ولا يُطبق شرط الحد الأدنى)
+// أغراض معفاة من تكلفة الـ EP عند التصنيع
 const EP_FREE_MATERIALS = ['مشروب محفز', 'مشروب الطاقة'];
 
-// ===== مساعدات =====
+// ===== مساعدات لتسهيل البحث وقراءة النصوص =====
 
 function getBagCapacity(player) {
   return (player.bagLevel || 1) * 5;
@@ -238,6 +237,19 @@ function getBagCapacity(player) {
 
 function recipeText(recipe) {
   return recipe.map(ing => `${ing.qty} ${ing.name}`).join(' + ');
+}
+
+// دالة لمعالجة النصوص العربية لضمان مرونة البحث
+function normalizeString(str) {
+  if (!str) return '';
+  return str
+    .trim()
+    .replace(/^(ال)/, '')            // إزالة ال التعريف في البداية
+    .replace(/\s+(ال)/g, ' ')        // إزالة ال التعريف بعد المسافات
+    .replace(/[أإآ]/g, 'ا')          // توحيد الألفات
+    .replace(/ة/g, 'ه')              // توحيد التاء المربوطة والهاء
+    .replace(/ى/g, 'ي')              // توحيد الياء والألف المقصورة
+    .replace(/\s+/g, '');            // إزالة كافة المسافات للمطابقة التقريبية
 }
 
 function canCraft(bag, recipe) {
@@ -276,11 +288,12 @@ function consumeIngredients(bag, recipe) {
 }
 
 function findCraftable(name) {
-  const w = WEAPONS.find(x => x.name === name);
+  const normName = normalizeString(name);
+  const w = WEAPONS.find(x => normalizeString(x.name) === normName);
   if (w) return { item: w, itemType: 'weapon' };
-  const a = ARMORS.find(x => x.name === name);
+  const a = ARMORS.find(x => normalizeString(x.name) === normName);
   if (a) return { item: a, itemType: 'armor' };
-  const m = MATERIALS.find(x => x.name === name);
+  const m = MATERIALS.find(x => normalizeString(x.name) === normName);
   if (m) return { item: m, itemType: 'material' };
   return null;
 }
@@ -301,11 +314,16 @@ function buildSortedList(items, bag, buildEntry) {
 
 async function handleTasni3Menu(api, event, kingdom) {
   const { senderID, messageID, threadID } = event;
-  if (!kingdom) return;
 
   const player = await getPlayer(senderID);
   if (!player) {
     await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return;
+  }
+
+  const activeKingdom = kingdom || player.kingdom;
+  if (!activeKingdom) {
+    await sendReply(api, `⚠️ يجب الانضمام إلى مملكة أولاً لتتمكن من استخدام نظام التصنيع!`, messageID, threadID);
     return;
   }
 
@@ -331,11 +349,16 @@ async function handleTasni3Menu(api, event, kingdom) {
 
 async function handleAslihah(api, event, kingdom) {
   const { senderID, messageID, threadID } = event;
-  if (!kingdom) return;
 
   const player = await getPlayer(senderID);
   if (!player) {
     await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return;
+  }
+
+  const activeKingdom = kingdom || player.kingdom;
+  if (!activeKingdom) {
+    await sendReply(api, `⚠️ يجب الانضمام إلى مملكة أولاً لتتمكن من تصفح الأسلحة المتاحة!`, messageID, threadID);
     return;
   }
 
@@ -367,11 +390,16 @@ async function handleAslihah(api, event, kingdom) {
 
 async function handleDuru3(api, event, kingdom) {
   const { senderID, messageID, threadID } = event;
-  if (!kingdom) return;
 
   const player = await getPlayer(senderID);
   if (!player) {
     await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return;
+  }
+
+  const activeKingdom = kingdom || player.kingdom;
+  if (!activeKingdom) {
+    await sendReply(api, `⚠️ يجب الانضمام إلى مملكة أولاً لتتمكن من تصفح الدروع المتاحة!`, messageID, threadID);
     return;
   }
 
@@ -402,11 +430,16 @@ async function handleDuru3(api, event, kingdom) {
 
 async function handleMawad(api, event, kingdom) {
   const { senderID, messageID, threadID } = event;
-  if (!kingdom) return;
 
   const player = await getPlayer(senderID);
   if (!player) {
     await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return;
+  }
+
+  const activeKingdom = kingdom || player.kingdom;
+  if (!activeKingdom) {
+    await sendReply(api, `⚠️ يجب الانضمام إلى مملكة أولاً لتتمكن من تصفح المواد المتاحة!`, messageID, threadID);
     return;
   }
 
@@ -439,7 +472,6 @@ async function handleMawad(api, event, kingdom) {
 async function handleCraftItem(api, event, kingdom) {
   const { threadID, senderID, messageID, body } = event;
   const text = (body || '').trim();
-  if (!kingdom) return;
 
   const match = text.match(/^تصنيع\s+(.+)$/);
   if (!match) return;
@@ -451,7 +483,13 @@ async function handleCraftItem(api, event, kingdom) {
     return;
   }
 
-  const isEpFree = EP_FREE_MATERIALS.includes(itemName);
+  const activeKingdom = kingdom || player.kingdom;
+  if (!activeKingdom) {
+    await sendReply(api, `⚠️ يجب الانضمام إلى مملكة أولاً لتتمكن من استخدام التصنيع!`, messageID, threadID);
+    return;
+  }
+
+  const isEpFree = EP_FREE_MATERIALS.some(name => normalizeString(name) === normalizeString(itemName));
   const currentEP = player.ep ?? 1000;
   if (!isEpFree && currentEP < 30) {
     await sendReply(api,
@@ -579,8 +617,6 @@ async function handleCraftItem(api, event, kingdom) {
 }
 
 // ===== معالجة رد الشراء السريع للمواد الناقصة =====
-// يجب استدعاء هذه الدالة من الموجه الرئيسي عند وصول رد على رسالة (قبل معالجة الأوامر الأخرى)
-// إن أعادت true فهذا يعني أن الرسالة عولجت، وإلا فيجب تمريرها لباقي المعالجات
 
 async function handleCraftQuickBuyReply(api, event) {
   const { threadID, senderID, messageID, body } = event;
