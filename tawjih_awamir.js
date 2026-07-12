@@ -201,12 +201,6 @@ async function routeMainCommands(api, event, text, player, kingdom) {
     if (agentHandled) return true;
   }
 
-  if (text && text.length >= 2 && text.length <= 50) {
-    const { handleAgentStart } = require('./agent');
-    const agentStarted = await handleAgentStart(api, event, text);
-    if (agentStarted) return true;
-  }
-
   const numericHandled = await handleNumericReplyCommands(api, event, text);
   if (numericHandled) return true;
 
@@ -315,6 +309,13 @@ async function routeMainCommands(api, event, text, player, kingdom) {
   if (/^هجوم\s+.+\s+على\s+.+$/.test(text)) { await handleHijoom(api, event); return true; }
   if (text === 'تجهيز الدرع') { await handleTajhizDar3(api, event); return true; }
   if (text === 'التجهيز التلقائي') { await handleAutoEquipToggle(api, event); return true; }
+
+  // خيار احتياطي أخير: أي نص ما طابق أي أمر معروف أعلاه يُمرر للأيجنت كمحادثة حرة
+  if (text && text.length >= 2 && text.length <= 50) {
+    const { handleAgentStart } = require('./agent');
+    const agentStarted = await handleAgentStart(api, event, text);
+    if (agentStarted) return true;
+  }
 
   return false;
 }
