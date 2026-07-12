@@ -1,6 +1,7 @@
 const { getPlayer, getPlayerByNickname, updatePlayer, addNotification, addXP } = require('./database');
 const { sendReply, sendMessage, kingdomNamesAr } = require('./utils');
 const config = require('./config.json');
+const { applyOffensiveSkillEffects } = require('./matjar_maharat');
 
 // ===== مساعدات =====
 
@@ -107,8 +108,12 @@ async function handleHijoom(api, event) {
     return;
   }
 
+  // ===== ✨ تطبيق تأثيرات المهارات الهجومية المفعّلة (مثل تعزيز الصخرة) =====
+  const { multiplier: skillMultiplier, messages: skillMessages, activeSkills: updatedActiveSkills } =
+    applyOffensiveSkillEffects(attacker, weapon);
+
   // ===== ⚡ فحص واستهلاك الطاقة =====
-  const baseDamage = weapon.damage;
+  const baseDamage = weapon.damage * skillMultiplier;
   const requiredEP = Math.round(baseDamage * 1.6);
   const attackerEp = attacker.ep ?? 1000;
 
@@ -188,7 +193,8 @@ async function handleHijoom(api, event) {
   let attackerUpdates = { 
     bag: newAttackerBag, 
     weaponAttacksCount, 
-    ep: attackerEp - requiredEP 
+    ep: attackerEp - requiredEP,
+    activeSkills: updatedActiveSkills
   };
 
   if (newHp <= 0) {
@@ -228,6 +234,14 @@ async function handleHijoom(api, event) {
         equipped: false
       };
       newAttackerBag.push(blackBox);
+
+      // 4.1 منح مخطوطة واحدة للقاتل (تُخزَّن كغرض عادي قابل للتكديس في الحقيبة)
+      const scrollIdx = newAttackerBag.findIndex(i => i.type === 'resource' && i.name === 'مخطوطة');
+      if (scrollIdx >= 0) {
+        newAttackerBag[scrollIdx].quantity += 1;
+      } else {
+        newAttackerBag.push({ name: 'مخطوطة', type: 'resource', quantity: 1 });
+      }
 
       // 5. تجهيز رسالة التنبيه المعلقة للقاتل
       attackerUpdates.killPendingNotify = {
@@ -278,6 +292,10 @@ async function handleHijoom(api, event) {
     ? `┋ 🔧 متانة السلاح المتبقية : ${weaponDurLeft.durability}\n`
     : `┋ 💥 السلاح تحطم بعد هذا الهجوم!\n`;
 
+  const skillLine = skillMessages.length > 0
+    ? skillMessages.map(m => `┋ ${m}\n`).join('')
+    : '';
+
   const attackerMsg =
     `┍━━━━[ ☢️ هجوم ناجح ]━━━━◊\n` +
     `┋ ⚔️ السلاح المستخدم : ${weapon.name}\n` +
@@ -287,6 +305,7 @@ async function handleHijoom(api, event) {
     `┋ 💢 الضرر الافتراضي : ${baseDamage}\n` +
     `┋ ☠️ الضرر المحقق    : ${actualDamage}\n` +
     durLine +
+    skillLine +
     `┕━━━━━━━━━━━━━━━━━◊`;
 
   await sendReply(api, attackerMsg, messageID, threadID);
