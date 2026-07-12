@@ -1,5 +1,6 @@
-const { getPlayer, updatePlayer } = require('./database');
+const { getPlayer, updatePlayer, addItemToBag } = require('./database');
 const { sendReply } = require('./utils');
+const { findResourceByName, calculatePrice } = require('./mubadil');
 
 // ===== بيانات الأسلحة =====
 
@@ -217,9 +218,14 @@ const MATERIALS = [
   }
 ];
 
-// ===== مواد لا تستهلك طاقة عند تصنيعها =====
+// ===== الشراء السريع للمواد الناقصة =====
 
-const NO_EP_COST_ITEMS = ['مشروب محفز', 'مشروب الطاقة'];
+const QUICK_BUY_FEE = 30; // رسوم ثابتة تُضاف على تكلفة المواد عند الشراء السريع
+const QUICK_BUY_EXPIRY_MS = 5 * 60 * 1000; // مدة صلاحية عرض الشراء السريع (تطابق كاش أسعار المبادل)
+
+// جلسات الشراء السريع بالذاكرة، مفتاحها senderID
+// القيمة: { threadID, itemName, purchases, totalCost, replyMessageId, expiresAt }
+const pendingQuickBuy = new Map();
 
 // ===== مساعدات =====
 
@@ -443,9 +449,7 @@ async function handleCraftItem(api, event, kingdom) {
   }
 
   const currentEP = player.ep ?? 1000;
-  const skipEPCost = NO_EP_COST_ITEMS.includes(itemName);
-
-  if (!skipEPCost && currentEP < 30) {
+  if (currentEP < 30) {
     await sendReply(api,
       `●── ⟪ فشل التصنيع ⚙️❌ ⟫ ──●\n❖ طاقتك غير كافية للتصنيع\n❖ EP لديك : ${currentEP}/1000\n❖ تحتاج على الأقل 30 EP\n●─────── ⌬ ───────●`,
       messageID, threadID);
@@ -465,19 +469,65 @@ async function handleCraftItem(api, event, kingdom) {
 
   if (!canCraft(bag, item.recipe)) {
     const missing = [];
+    const purchasable = [];
+    let hasUnpurchasableMissing = false;
+
     for (const ing of item.recipe) {
       if (ing.type === 'weapon' || ing.type === 'armor') {
         const have = bag.filter(i => i.name === ing.name && i.type === ing.type).length;
-        if (have < ing.qty) missing.push(`${ing.name} (لديك ${have}/${ing.qty})`);
+        if (have < ing.qty) {
+          missing.push(`${ing.name} (لديك ${have}/${ing.qty})`);
+          hasUnpurchasableMissing = true;
+        }
       } else {
         const res = bag.find(i => i.name === ing.name && i.type === 'resource');
         const have = res ? res.quantity : 0;
-        if (have < ing.qty) missing.push(`${ing.name} (لديك ${have}/${ing.qty})`);
+        if (have < ing.qty) {
+          missing.push(`${ing.name} (لديك ${have}/${ing.qty})`);
+          const needQty = ing.qty - have;
+          const resourceDef = findResourceByName(ing.name);
+          if (resourceDef) {
+            const unitPrice = await calculatePrice(resourceDef);
+            purchasable.push({ name: ing.name, needQty, unitPrice, cost: unitPrice * needQty });
+          } else {
+            hasUnpurchasableMissing = true;
+          }
+        }
       }
     }
-    await sendReply(api,
-      `●── ⟪ فشل التصنيع ⚙️❌ ⟫ ──●\n❖ مواردك غير كافية\n${missing.map(m => `┇ ${m}`).join('\n')}\n●─────── ⌬ ───────●`,
-      messageID, threadID);
+
+    let msg =
+      `●── ⟪ فشل التصنيع ⚙️❌ ⟫ ──●\n` +
+      `❖ مواردك غير كافية\n${missing.map(m => `┇ ${m}`).join('\n')}`;
+
+    let quickBuy = null;
+    if (purchasable.length > 0) {
+      const materialsCost = purchasable.reduce((sum, p) => sum + p.cost, 0);
+      const totalCost = materialsCost + QUICK_BUY_FEE;
+      quickBuy = { purchases: purchasable, totalCost };
+
+      msg += `\n➤ للشراء السريع للمواد الناقصة رد على هذه الرسالة برقم 0\n`;
+      msg += `❖ التكلفة : ${totalCost} كوينز (شامل 30 كوينز رسوم الشراء السريع)`;
+      if (hasUnpurchasableMissing) {
+        msg += `\n⚠️ الشراء السريع يغطي الموارد الخام فقط دون الأغراض المُصنّعة الناقصة أعلاه`;
+      }
+    }
+
+    msg += `\n●─────── ⌬ ───────●`;
+
+    const sentInfo = await sendReply(api, msg, messageID, threadID);
+
+    if (quickBuy && sentInfo && sentInfo.messageID) {
+      pendingQuickBuy.set(String(senderID), {
+        threadID,
+        itemName: item.name,
+        purchases: quickBuy.purchases,
+        totalCost: quickBuy.totalCost,
+        replyMessageId: String(sentInfo.messageID),
+        expiresAt: Date.now() + QUICK_BUY_EXPIRY_MS
+      });
+    }
+
     return;
   }
 
@@ -516,12 +566,81 @@ async function handleCraftItem(api, event, kingdom) {
   }
 
   bagAfterConsume.push(newItem);
-  const newEP = skipEPCost ? currentEP : currentEP - 30;
-  await updatePlayer(String(senderID), { bag: bagAfterConsume, ep: newEP });
+  await updatePlayer(String(senderID), { bag: bagAfterConsume, ep: currentEP - 30 });
 
   await sendReply(api,
     `●── ⟪ تم التصنيع بنجاح ⚙️✅ ⟫ ──●\n『 الغرض المصنوع 』↜ ┇ ${displayText}\n●─────── ⌬ ───────●`,
     messageID, threadID);
+}
+
+// ===== معالجة رد الشراء السريع للمواد الناقصة =====
+// يجب استدعاء هذه الدالة من الموجه الرئيسي عند وصول رد على رسالة (قبل معالجة الأوامر الأخرى)
+// إن أعادت true فهذا يعني أن الرسالة عولجت، وإلا فيجب تمريرها لباقي المعالجات
+
+async function handleCraftQuickBuyReply(api, event) {
+  const { threadID, senderID, messageID, body } = event;
+  const text = (body || '').trim();
+  if (text !== '0') return false;
+
+  const repliedId = event.messageReply ? String(event.messageReply.messageID) : null;
+  if (!repliedId) return false;
+
+  const pending = pendingQuickBuy.get(String(senderID));
+  if (!pending || pending.replyMessageId !== repliedId) {
+    await sendReply(api,
+      `هذا العرض لم يعد صالحاً (منتهي الصلاحية أو تم استبداله بمحاولة تصنيع أحدث)، حاول التصنيع مجدداً ⌛️`,
+      messageID, threadID);
+    return true;
+  }
+
+  pendingQuickBuy.delete(String(senderID));
+
+  if (Date.now() > pending.expiresAt) {
+    await sendReply(api,
+      `انتهت صلاحية عرض الشراء السريع، حاول التصنيع مجدداً ⌛️`,
+      messageID, threadID);
+    return true;
+  }
+
+  const player = await getPlayer(senderID);
+  if (!player) {
+    await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return true;
+  }
+
+  const coins = player.coins || 0;
+  if (coins < pending.totalCost) {
+    await sendReply(api,
+      `رصيدك غير كافي لإتمام الشراء السريع 🚫\n◆ التكلفة : ${pending.totalCost} كوينز\n◆ رصيدك : ${coins} كوينز`,
+      messageID, threadID);
+    return true;
+  }
+
+  const bag = player.bag || [];
+  const capacity = getBagCapacity(player);
+  const newDistinctItems = pending.purchases.filter(p =>
+    !bag.some(i => i.name === p.name && i.type === 'resource')
+  ).length;
+
+  if (bag.length + newDistinctItems > capacity) {
+    await sendReply(api, `حقيبتك ممتلئة، لا يمكنك إتمام الشراء السريع ❌️`, messageID, threadID);
+    return true;
+  }
+
+  for (const p of pending.purchases) {
+    await addItemToBag(String(senderID), p.name, p.needQty);
+  }
+  const newCoins = coins - pending.totalCost;
+  await updatePlayer(String(senderID), { coins: newCoins });
+
+  const breakdown = pending.purchases
+    .map(p => `◆ ${p.name} ×${p.needQty} — ${p.cost} كوينز`)
+    .join('\n');
+
+  await sendReply(api,
+    `✅️ تم الشراء السريع بنجاح\n${breakdown}\n💰 التكلفة الإجمالية : ${pending.totalCost} كوينز\n◆ رصيدك الحالي : ${newCoins} كوينز\n\nيمكنك الآن إعادة محاولة التصنيع 《 تصنيع ${pending.itemName} 》`,
+    messageID, threadID);
+  return true;
 }
 
 module.exports = {
@@ -530,6 +649,7 @@ module.exports = {
   handleDuru3,
   handleMawad,
   handleCraftItem,
+  handleCraftQuickBuyReply,
   WEAPONS,
   ARMORS,
   MATERIALS
