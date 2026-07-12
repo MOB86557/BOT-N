@@ -1,5 +1,5 @@
 const { getPlayer, updatePlayer } = require('./database');
-const { sendReply, getKingdomByThreadId } = require('./utils');
+const { sendReply } = require('./utils');
 
 // ===== بيانات الأسلحة =====
 
@@ -286,9 +286,8 @@ function buildSortedList(items, bag, buildEntry) {
 
 // ===== قائمة التصنيع الرئيسية =====
 
-async function handleTasni3Menu(api, event) {
-  const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+async function handleTasni3Menu(api, event, kingdom) {
+  const { senderID, messageID, threadID } = event;
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
@@ -317,9 +316,8 @@ async function handleTasni3Menu(api, event) {
 
 // ===== قائمة الأسلحة =====
 
-async function handleAslihah(api, event) {
-  const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+async function handleAslihah(api, event, kingdom) {
+  const { senderID, messageID, threadID } = event;
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
@@ -354,9 +352,8 @@ async function handleAslihah(api, event) {
 
 // ===== قائمة الدروع =====
 
-async function handleDuru3(api, event) {
-  const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+async function handleDuru3(api, event, kingdom) {
+  const { senderID, messageID, threadID } = event;
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
@@ -390,9 +387,8 @@ async function handleDuru3(api, event) {
 
 // ===== قائمة المواد =====
 
-async function handleMawad(api, event) {
-  const { threadID, senderID, messageID } = event;
-  const kingdom = getKingdomByThreadId(threadID);
+async function handleMawad(api, event, kingdom) {
+  const { senderID, messageID, threadID } = event;
   if (!kingdom) return;
 
   const player = await getPlayer(senderID);
@@ -427,10 +423,9 @@ async function handleMawad(api, event) {
 
 // ===== تصنيع غرض =====
 
-async function handleCraftItem(api, event) {
+async function handleCraftItem(api, event, kingdom) {
   const { threadID, senderID, messageID, body } = event;
   const text = (body || '').trim();
-  const kingdom = getKingdomByThreadId(threadID);
   if (!kingdom) return;
 
   const match = text.match(/^تصنيع\s+(.+)$/);
