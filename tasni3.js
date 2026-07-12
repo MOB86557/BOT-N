@@ -217,6 +217,10 @@ const MATERIALS = [
   }
 ];
 
+// ===== مواد لا تستهلك طاقة عند تصنيعها =====
+
+const NO_EP_COST_ITEMS = ['مشروب محفز', 'مشروب الطاقة'];
+
 // ===== مساعدات =====
 
 function getBagCapacity(player) {
@@ -439,7 +443,9 @@ async function handleCraftItem(api, event, kingdom) {
   }
 
   const currentEP = player.ep ?? 1000;
-  if (currentEP < 30) {
+  const skipEPCost = NO_EP_COST_ITEMS.includes(itemName);
+
+  if (!skipEPCost && currentEP < 30) {
     await sendReply(api,
       `●── ⟪ فشل التصنيع ⚙️❌ ⟫ ──●\n❖ طاقتك غير كافية للتصنيع\n❖ EP لديك : ${currentEP}/1000\n❖ تحتاج على الأقل 30 EP\n●─────── ⌬ ───────●`,
       messageID, threadID);
@@ -510,7 +516,8 @@ async function handleCraftItem(api, event, kingdom) {
   }
 
   bagAfterConsume.push(newItem);
-  await updatePlayer(String(senderID), { bag: bagAfterConsume, ep: currentEP - 30 });
+  const newEP = skipEPCost ? currentEP : currentEP - 30;
+  await updatePlayer(String(senderID), { bag: bagAfterConsume, ep: newEP });
 
   await sendReply(api,
     `●── ⟪ تم التصنيع بنجاح ⚙️✅ ⟫ ──●\n『 الغرض المصنوع 』↜ ┇ ${displayText}\n●─────── ⌬ ───────●`,
