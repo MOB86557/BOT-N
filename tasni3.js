@@ -1,6 +1,15 @@
 const { getPlayer, updatePlayer, addItemToBag } = require('./database');
 const { sendReply } = require('./utils');
-const { findResourceByName, calculatePrice } = require('./mubadil');
+
+// استيراد آمن لملف المبادل لتفادي الانهيار إذا لم تكن الدالة مصدّرة
+const mubadil = require('./mubadil');
+
+// طباعة تشخيصية في الكونسول لمعرفة الدوال المصدرة من ملف المبادل
+console.log('[DIAGNOSTIC] mubadil exports:', Object.keys(mubadil));
+
+const findResourceByName = mubadil.findResourceByName;
+// التحقق مما إذا كانت الدالة متوفرة أم لا
+const calculatePrice = typeof mubadil.calculatePrice === 'function' ? mubadil.calculatePrice : null;
 
 // ===== بيانات الأسلحة =====
 
@@ -527,10 +536,27 @@ async function handleCraftItem(api, event, kingdom) {
         if (have < ing.qty) {
           missing.push(`${ing.name} (لديك ${have}/${ing.qty})`);
           const needQty = ing.qty - have;
-          const resourceDef = findResourceByName(ing.name);
-          if (resourceDef) {
-            const unitPrice = await calculatePrice(resourceDef);
-            purchasable.push({ name: ing.name, needQty, unitPrice, cost: unitPrice * needQty });
+          
+          if (findResourceByName) {
+            const resourceDef = findResourceByName(ing.name);
+            if (resourceDef) {
+              // حساب سعر المورد بشكل آمن لتجنب انهيار الكود
+              let unitPrice = 10; // قيمة افتراضية احترازية
+              if (calculatePrice) {
+                try {
+                  unitPrice = await calculatePrice(resourceDef);
+                } catch (err) {
+                  console.error('[ERROR] Failed to run calculatePrice:', err);
+                }
+              } else if (typeof resourceDef.price === 'number') {
+                unitPrice = resourceDef.price;
+              } else if (typeof resourceDef.basePrice === 'number') {
+                unitPrice = resourceDef.basePrice;
+              }
+              purchasable.push({ name: ing.name, needQty, unitPrice, cost: unitPrice * needQty });
+            } else {
+              hasUnpurchasableMissing = true;
+            }
           } else {
             hasUnpurchasableMissing = true;
           }
