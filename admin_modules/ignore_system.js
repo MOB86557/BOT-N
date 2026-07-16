@@ -8,6 +8,16 @@ const { getPlayer, updatePlayer, setAdminSession } = require('../database');
 // كاش لتسجيل فحص عناوين المجموعات لتجنب استدعاء API بشكل متكرر
 global.lastMuteTitleCheck = global.lastMuteTitleCheck || {};
 
+// تنظيف دوري للكاش كل 10 دقائق — يحذف الإدخالات القديمة التي تجاوزت دقيقة واحدة
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 1000;
+  for (const key of Object.keys(global.lastMuteTitleCheck)) {
+    if (global.lastMuteTitleCheck[key] < cutoff) {
+      delete global.lastMuteTitleCheck[key];
+    }
+  }
+}, 10 * 60 * 1000);
+
 // تهيئة مجموعات الصمت من قاعدة البيانات عند الحاجة
 async function initMutedGroups() {
   if (global.mutedGroupsLoaded) return;
