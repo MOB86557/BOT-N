@@ -5,7 +5,7 @@ let db = null;
 async function connectDB() {
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('❌ متغير MONGODB_URI غير موجود في Secrets');
-  const client = new MongoClient(uri);
+  const client = new MongoClient(uri, { maxPoolSize: 5, minPoolSize: 1 });
   await client.connect();
   db = client.db('nexus');
   console.log('✅ تم الاتصال بقاعدة البيانات');
