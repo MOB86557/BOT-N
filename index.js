@@ -81,18 +81,7 @@ process.addListener = function(event, listener) {
   return originalAddListener.apply(this, arguments);
 };
 
-// ─── 0. مزامنة الملفات مع مستودع GitHub قبل أي شيء آخر ───
-// هذا يضمن أن كل الملفات المحلية مطابقة لآخر نسخة على GitHub قبل تشغيل البوت
-(async () => {
-  try {
-    await require('./github_sync').syncFromGitHub();
-  } catch (e) {
-    console.error('[SYNC] ❌ فشلت عملية المزامنة مع GitHub:', e.message);
-    console.error('[SYNC] ⏭️  سيتم تشغيل البوت بالملفات المحلية الحالية بدون تحديث.');
-  }
-
-  runBot();
-})();
+runBot();
 
 function runBot() {
 
